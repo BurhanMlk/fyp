@@ -137,7 +137,7 @@ class _DonorSearchScreenState extends State<DonorSearchScreen> {
             Slider(min: 1, max: 200, divisions: 40, value: _maxKm, onChanged: (v) => setState(() => _maxKm = v)),
             Row(children: [Checkbox(value: _onlyAvailable, onChanged: (v) => setState(() => _onlyAvailable = v ?? true)), Text('Only show available donors')]),
             SizedBox(height: 8),
-            Row(children: [Expanded(child: ElevatedButton(onPressed: _loading ? null : _locateAndSearch, child: Padding(padding: const EdgeInsets.symmetric(vertical: 12.0), child: Text(_loading ? 'Searching...' : 'Find nearby donors'))))]),
+            Row(children: [Expanded(child: OutlinedButton(onPressed: _loading ? null : _locateAndSearch, style: OutlinedButton.styleFrom(backgroundColor: Colors.transparent, foregroundColor: Colors.black, side: BorderSide(color: Colors.black, width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), padding: EdgeInsets.symmetric(vertical: 12)), child: Text(_loading ? 'Searching...' : 'Find nearby donors')))]),
             SizedBox(height: 12),
             if (_position != null) Padding(padding: const EdgeInsets.only(bottom:8.0), child: Text('Your location: ${_position!.latitude.toStringAsFixed(4)}, ${_position!.longitude.toStringAsFixed(4)}', style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
             Expanded(child: _results.isEmpty ? Center(child: Text(_loading ? 'Searching...' : 'No results')) : ListView.builder(itemCount: _results.length, itemBuilder: (context, i) {
@@ -153,15 +153,44 @@ class _DonorSearchScreenState extends State<DonorSearchScreen> {
                 } catch (_) {}
                 return CircleAvatar(child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'));
               }
-              return ListTile(
-                leading: avatar(),
-                title: Text(name),
-                subtitle: Text('$blood • ${loc.toString()}'),
-                trailing: Text('${dist.toStringAsFixed(1)} km'),
-                onTap: () {
-                  // show details
-                  showDialog(context: context, builder: (_) => AlertDialog(title: Text(name), content: Text('Blood: $blood\nLocation: $loc\nDistance: ${dist.toStringAsFixed(1)} km\nContact: ${r['contact'] ?? 'hidden'}'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: Text('OK'))]));
-                },
+              return Card(
+                margin: EdgeInsets.symmetric(vertical: 4),
+                color: Colors.white.withOpacity(0.85),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.black, width: 2),
+                ),
+                child: ListTile(
+                  leading: avatar(),
+                  title: Text(name),
+                  subtitle: Text('$blood • ${loc.toString()}'),
+                  trailing: Text('${dist.toStringAsFixed(1)} km'),
+                  onTap: () {
+                    // show details
+                    showDialog(context: context, builder: (_) => AlertDialog(
+                      backgroundColor: Colors.white.withOpacity(0.85),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(color: Colors.black, width: 2),
+                      ),
+                      title: Text(name),
+                      content: Text('Blood: $blood\nLocation: $loc\nDistance: ${dist.toStringAsFixed(1)} km\nContact: ${r['contact'] ?? 'hidden'}'),
+                      actions: [
+                        OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            foregroundColor: Colors.black,
+                            side: BorderSide(color: Colors.black, width: 2),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          ),
+                          child: Text('OK'),
+                        )
+                      ]
+                    ));
+                  },
+                ),
               );
             })),
           ],

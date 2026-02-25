@@ -207,11 +207,23 @@ class _DonorListScreenState extends State<DonorListScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 2),
+        ),
         title: const Text('Filters'),
         content: const Text('Additional filter options coming soon'),
         actions: [
-          TextButton(
+          OutlinedButton(
             onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             child: const Text('Close'),
           ),
         ],
@@ -224,6 +236,11 @@ class _DonorListScreenState extends State<DonorListScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 2),
+        ),
         title: const Text('Select Blood Type'),
         content: Wrap(
           spacing: 8,
@@ -240,15 +257,29 @@ class _DonorListScreenState extends State<DonorListScreen> {
           }).toList(),
         ),
         actions: [
-          TextButton(
+          OutlinedButton(
             onPressed: () {
               setState(() => _filterBloodType = null);
               Navigator.pop(context);
             },
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             child: const Text('Clear'),
           ),
-          TextButton(
+          OutlinedButton(
             onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             child: const Text('Close'),
           ),
         ],
@@ -261,6 +292,11 @@ class _DonorListScreenState extends State<DonorListScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 2),
+        ),
         title: const Text('Select Location'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -277,15 +313,29 @@ class _DonorListScreenState extends State<DonorListScreen> {
           }).toList(),
         ),
         actions: [
-          TextButton(
+          OutlinedButton(
             onPressed: () {
               setState(() => _filterLocation = null);
               Navigator.pop(context);
             },
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             child: const Text('Clear'),
           ),
-          TextButton(
+          OutlinedButton(
             onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             child: const Text('Close'),
           ),
         ],
@@ -412,15 +462,9 @@ class _DonorListScreenState extends State<DonorListScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.white.withOpacity(0.85),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          border: Border.all(color: Colors.black, width: 2),
         ),
         child: Row(
           children: [
@@ -508,16 +552,16 @@ class _DonorListScreenState extends State<DonorListScreen> {
                     ),
                   ),
                 const SizedBox(height: 8),
-                ElevatedButton(
+                OutlinedButton(
                   onPressed: () => _handleContact(data, docId),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF6B6B),
-                    foregroundColor: Colors.white,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.black,
+                    side: BorderSide(color: Colors.black, width: 2),
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    elevation: 0,
                   ),
                   child: const Text(
                     'Contact',
@@ -538,9 +582,12 @@ class _DonorListScreenState extends State<DonorListScreen> {
   Widget _buildAvatar(Map<String, dynamic> data) {
     final img = _imageFromBase64(data['photoData'] as String?);
     final name = (data['name'] ?? '').toString();
+    final verified = data['verified'] == true;
+    
+    Widget avatarWidget;
     
     if (img != null) {
-      return Container(
+      avatarWidget = Container(
         width: 60,
         height: 60,
         decoration: BoxDecoration(
@@ -551,25 +598,52 @@ class _DonorListScreenState extends State<DonorListScreen> {
           ),
         ),
       );
-    }
-    
-    return Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        color: const Color(0xFFE5E0FF),
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Text(
-          name.isNotEmpty ? name[0].toUpperCase() : '?',
-          style: const TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF8B7EFF),
+    } else {
+      avatarWidget = Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          color: const Color(0xFFE5E0FF),
+          shape: BoxShape.circle,
+        ),
+        child: Center(
+          child: Text(
+            name.isNotEmpty ? name[0].toUpperCase() : '?',
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF8B7EFF),
+            ),
           ),
         ),
-      ),
+      );
+    }
+    
+    if (!verified) {
+      return avatarWidget;
+    }
+    
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        avatarWidget,
+        Positioned(
+          right: -2,
+          bottom: -2,
+          child: Container(
+            padding: EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.verified,
+              color: Colors.blue,
+              size: 20,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -584,11 +658,23 @@ class _DonorListScreenState extends State<DonorListScreen> {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
+          backgroundColor: Colors.white.withOpacity(0.85),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.black, width: 2),
+          ),
           title: const Text('Not Approved'),
           content: const Text('This donor is not yet approved. Contact information is only available for approved donors.'),
           actions: [
-            TextButton(
+            OutlinedButton(
               onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.black,
+                side: BorderSide(color: Colors.black, width: 2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
               child: const Text('OK'),
             ),
           ],
@@ -600,6 +686,11 @@ class _DonorListScreenState extends State<DonorListScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 2),
+        ),
         title: Text(name),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -613,18 +704,29 @@ class _DonorListScreenState extends State<DonorListScreen> {
           ],
         ),
         actions: [
-          TextButton(
+          OutlinedButton(
             onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             child: const Text('Close'),
           ),
           if (contact != 'No contact')
-            ElevatedButton(
+            OutlinedButton(
               onPressed: () {
                 final uri = Uri.parse('tel:$contact');
                 launchUrl(uri);
               },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF6B6B),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.black,
+                side: BorderSide(color: Colors.black, width: 2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               ),
               child: const Text('Call'),
             ),

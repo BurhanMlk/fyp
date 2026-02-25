@@ -180,7 +180,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         Navigator.of(context).pop();
         // Show a top banner informing the user the account was created, then navigate to Login
-        ScaffoldMessenger.of(context).clearMaterialBanners();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('✓ Account created successfully! Please login to continue.'),
@@ -188,21 +187,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             duration: Duration(seconds: 3),
           ),
         );
-        ScaffoldMessenger.of(context).showMaterialBanner(
-          MaterialBanner(
-            leading: Icon(Icons.check_circle, color: Colors.green),
-            content: Text('Account created successfully. Please login.'),
-            backgroundColor: Colors.lightGreen[50],
-            actions: [
-              TextButton(
-                onPressed: () => ScaffoldMessenger.of(context).clearMaterialBanners(),
-                child: Text('Dismiss'),
-              ),
-            ],
-          ),
-        );
         Future.delayed(Duration(seconds: 3), () {
-          ScaffoldMessenger.of(context).clearMaterialBanners();
           Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => LoginScreen()));
         });
       }).catchError((e) {
@@ -255,8 +240,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         // Do NOT auto-login in demo mode. Ask user to login to view their profile.
         Navigator.of(context).pop();
-        // Show top banner in demo flow as well
-        ScaffoldMessenger.of(context).clearMaterialBanners();
+        // Show success message in demo flow
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('✓ Account created successfully! Please login to continue.'),
@@ -264,21 +248,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             duration: Duration(seconds: 3),
           ),
         );
-        ScaffoldMessenger.of(context).showMaterialBanner(
-          MaterialBanner(
-            leading: Icon(Icons.check_circle, color: Colors.green),
-            content: Text('Account created (demo). Please login.'),
-            backgroundColor: Colors.lightGreen[50],
-            actions: [
-              TextButton(
-                onPressed: () => ScaffoldMessenger.of(context).clearMaterialBanners(),
-                child: Text('Dismiss'),
-              ),
-            ],
-          ),
-        );
         Future.delayed(Duration(seconds: 2), () {
-          ScaffoldMessenger.of(context).clearMaterialBanners();
           Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => LoginScreen()));
         });
       });
@@ -410,9 +380,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     constraints: BoxConstraints(maxWidth: 720),
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.transparent,
+                        color: Colors.white.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade300, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [

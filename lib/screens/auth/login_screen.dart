@@ -341,7 +341,7 @@ class _LoginScreenState extends State<LoginScreen> {
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [AppTheme.bgDeep, Color(0xFFFFEBEE)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+                color: Colors.transparent,
               ),
             ),
           ),
@@ -354,9 +354,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 constraints: BoxConstraints(maxWidth: 520),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white.withOpacity(0.3), width: 1.5),
+                    color: Colors.white.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade300, width: 1.5),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.1),
@@ -366,7 +366,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 22.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [

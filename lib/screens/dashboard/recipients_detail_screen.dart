@@ -253,9 +253,10 @@ class _RecipientsDetailScreenState extends State<RecipientsDetailScreen> {
 
     return Card(
       margin: EdgeInsets.only(bottom: 12),
-      elevation: 2,
+      color: Colors.white.withOpacity(0.85),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.black, width: 2),
       ),
       child: InkWell(
         onTap: () {
@@ -530,7 +531,7 @@ class _RecipientsDetailScreenState extends State<RecipientsDetailScreen> {
               // Action Button
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
+                child: OutlinedButton(
                   onPressed: () {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -540,12 +541,13 @@ class _RecipientsDetailScreenState extends State<RecipientsDetailScreen> {
                       ),
                     );
                   },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.black,
+                    side: BorderSide(color: Colors.black, width: 2),
                     padding: EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                   ),
                   child: Text(

@@ -142,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.red.shade700, Colors.red.shade400, Colors.pink.shade300],
+              colors: [Color(0xFFFF6B6B), Color(0xFFFF8787), Color(0xFFFFA5A5)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -158,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
             DrawerHeader(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.red.shade700.withOpacity(0.9), Colors.red.shade400.withOpacity(0.9), Colors.pink.shade300.withOpacity(0.9)],
+                  colors: [Color(0xFFFF6B6B).withOpacity(0.9), Color(0xFFFF8787).withOpacity(0.9), Color(0xFFFFA5A5).withOpacity(0.9)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -297,14 +297,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
-        contentPadding: EdgeInsets.zero,
-        content: Container(
+        child: Container(
+          constraints: BoxConstraints(maxWidth: 400),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.95),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white.withOpacity(0.3), width: 1.5),
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade300, width: 1.5),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.1),
@@ -313,45 +313,113 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          padding: EdgeInsets.all(20),
+          padding: EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Icon(Icons.admin_panel_settings, color: Color(0xFFD32F2F)),
-                  SizedBox(width: 12),
-                  Text('Admin Contact', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
-                ],
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: Color(0xFFD32F2F),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 6)],
+                ),
+                child: Icon(Icons.admin_panel_settings, color: Colors.white, size: 32),
               ),
               SizedBox(height: 16),
-              ListTile(
-                leading: Icon(Icons.person, color: Color(0xFFD32F2F)),
-                title: Text('Name', style: TextStyle(color: Colors.black)),
-                subtitle: Text(adminName, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                contentPadding: EdgeInsets.zero,
+              Text('Admin Contact', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black)),
+              SizedBox(height: 24),
+              // Name Field
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.person, color: Color(0xFFD32F2F), size: 24),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Name', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                          SizedBox(height: 2),
+                          Text(adminName, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black, fontSize: 16)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              Divider(),
-              ListTile(
-                leading: Icon(Icons.email, color: Color(0xFFD32F2F)),
-                title: Text('Email', style: TextStyle(color: Colors.black)),
-                subtitle: Text(adminEmail, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                contentPadding: EdgeInsets.zero,
+              SizedBox(height: 12),
+              // Email Field
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.email, color: Color(0xFFD32F2F), size: 24),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Email', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                          SizedBox(height: 2),
+                          Text(adminEmail, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black, fontSize: 16)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              Divider(),
-              ListTile(
-                leading: Icon(Icons.phone, color: Color(0xFFD32F2F)),
-                title: Text('Contact', style: TextStyle(color: Colors.black)),
-                subtitle: Text(adminContact, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                contentPadding: EdgeInsets.zero,
+              SizedBox(height: 12),
+              // Contact Field
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.phone, color: Color(0xFFD32F2F), size: 24),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Contact', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                          SizedBox(height: 2),
+                          Text(adminContact, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black, fontSize: 16)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
+              SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text('Close', style: TextStyle(color: Color(0xFFD32F2F), fontSize: 16, fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.black,
+                    side: BorderSide(color: Colors.black, width: 2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text('Close', style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.w600)),
                 ),
               ),
             ],

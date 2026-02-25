@@ -94,8 +94,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (pd is String && pd.isNotEmpty) {
             final bytes = base64Decode(pd);
             avatar = Container(
-              width: 120,
-              height: 120,
+              width: 100,
+              height: 100,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.red[300]!, width: 4),
@@ -107,12 +107,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
-              child: CircleAvatar(radius: 56, backgroundImage: MemoryImage(bytes)),
+              child: CircleAvatar(radius: 46, backgroundImage: MemoryImage(bytes)),
             );
           } else {
             avatar = Container(
-              width: 120,
-              height: 120,
+              width: 100,
+              height: 100,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.red[300]!, width: 4),
@@ -125,16 +125,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
               child: CircleAvatar(
-                radius: 56,
+                radius: 46,
                 backgroundColor: Colors.red[100],
-                child: Icon(Icons.person, size: 60, color: Colors.red[700]),
+                child: Icon(Icons.person, size: 50, color: Colors.red[700]),
               ),
             );
           }
         } catch (e) {
           avatar = Container(
-            width: 120,
-            height: 120,
+            width: 100,
+            height: 100,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(color: Colors.red[300]!, width: 4),
@@ -147,9 +147,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ],
             ),
             child: CircleAvatar(
-              radius: 56,
+              radius: 46,
               backgroundColor: Colors.red[100],
-              child: Icon(Icons.person, size: 60, color: Colors.red[700]),
+              child: Icon(Icons.person, size: 50, color: Colors.red[700]),
             ),
           );
         }
@@ -236,7 +236,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // Top Section with Avatar and Name
                   Container(
                     width: double.infinity,
-                    padding: EdgeInsets.only(top: 60, bottom: 30),
+                    padding: EdgeInsets.only(top: 40, bottom: 20),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: [Colors.red[700]!, Colors.red[500]!, Colors.pink[400]!],
@@ -254,18 +254,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: Column(
                       children: [
                         avatar,
-                        SizedBox(height: 20),
+                        SizedBox(height: 12),
                         Text(
                           name,
                           style: TextStyle(
-                            fontSize: 28,
+                            fontSize: 24,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                             decoration: TextDecoration.none,
                             letterSpacing: 0.5,
                           ),
                         ),
-                        SizedBox(height: 8),
+                        SizedBox(height: 6),
                         Container(
                           padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                           decoration: BoxDecoration(

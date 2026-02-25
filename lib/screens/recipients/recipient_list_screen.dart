@@ -102,8 +102,11 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
             Widget avatar() {
               final img = _imageFromBase64(data['photoData'] as String?);
               final n = (data['name'] ?? '') as String? ?? '';
+              final verified = data['verified'] == true;
+              
+              Widget avatarWidget;
               if (img != null) {
-                return Container(
+                avatarWidget = Container(
                   width: 60,
                   height: 60,
                   decoration: BoxDecoration(
@@ -112,25 +115,51 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                     image: DecorationImage(image: img, fit: BoxFit.cover),
                   ),
                 );
-              }
-              return Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: Color(0xFFFFE5F0),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.pink.shade200, width: 2),
-                ),
-                child: Center(
-                  child: Text(
-                    n.isNotEmpty ? n[0].toUpperCase() : '?',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.pink.shade700,
+              } else {
+                avatarWidget = Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Color(0xFFFFE5F0),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.pink.shade200, width: 2),
+                  ),
+                  child: Center(
+                    child: Text(
+                      n.isNotEmpty ? n[0].toUpperCase() : '?',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.pink.shade700,
+                      ),
                     ),
                   ),
-                ),
+                );
+              }
+              
+              if (!verified) return avatarWidget;
+              
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  avatarWidget,
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.verified,
+                        color: Colors.blue,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
               );
             }
 
@@ -140,19 +169,9 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
             return Container(
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.white, Color(0xFFFFF5F8)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                color: Colors.white.withOpacity(0.85),
                 borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.pink.withOpacity(0.1),
-                    blurRadius: 15,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
+                border: Border.all(color: Colors.black, width: 2),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -272,8 +291,11 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
             Widget avatar() {
               final img = _imageFromBase64(data['photoData'] as String?);
               final n = (data['name'] ?? '') as String? ?? '';
+              final verified = data['verified'] == true;
+              
+              Widget avatarWidget;
               if (img != null) {
-                return Container(
+                avatarWidget = Container(
                   width: 60,
                   height: 60,
                   decoration: BoxDecoration(
@@ -282,25 +304,51 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                     image: DecorationImage(image: img, fit: BoxFit.cover),
                   ),
                 );
-              }
-              return Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: Color(0xFFFFE5F0),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.pink.shade200, width: 2),
-                ),
-                child: Center(
-                  child: Text(
-                    n.isNotEmpty ? n[0].toUpperCase() : '?',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.pink.shade700,
+              } else {
+                avatarWidget = Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Color(0xFFFFE5F0),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.pink.shade200, width: 2),
+                  ),
+                  child: Center(
+                    child: Text(
+                      n.isNotEmpty ? n[0].toUpperCase() : '?',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.pink.shade700,
+                      ),
                     ),
                   ),
-                ),
+                );
+              }
+              
+              if (!verified) return avatarWidget;
+              
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  avatarWidget,
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.verified,
+                        color: Colors.blue,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
               );
             }
 
@@ -310,19 +358,9 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
             return Container(
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.white, Color(0xFFFFF5F8)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                color: Colors.white.withOpacity(0.85),
                 borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.pink.withOpacity(0.1),
-                    blurRadius: 15,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
+                border: Border.all(color: Colors.black, width: 2),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
