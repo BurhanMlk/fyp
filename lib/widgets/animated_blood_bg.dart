@@ -87,50 +87,42 @@ class _BloodCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        minWidth: 0,
-        maxWidth: size,
-        minHeight: 0,
-        maxHeight: size * 0.66,
-      ),
-      child: Container(
-        width: size,
-        height: size * 0.66,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(size),
-          gradient: RadialGradient(
-            center: Alignment(-0.2, -0.3),
-            radius: 0.9,
-            colors: [
-              // soften the blood cell colors so the animated background isn't near-black
-              Color.lerp(Colors.red.shade300, Colors.red.shade700, depth)!,
-              Colors.red.shade400.withValues(alpha: 0.95),
-              Colors.red.shade300.withValues(alpha: 0.85),
-            ],
-            stops: [0.0, 0.5, 1.0],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18 * depth),
-              blurRadius: 18 * depth,
-              offset: Offset(0, 6 * depth),
-            ),
-            BoxShadow(
-              color: Colors.white.withValues(alpha: 0.08),
-              blurRadius: 2,
-              offset: Offset(-2, -2),
-            ),
+    return Container(
+      width: size,
+      height: size * 0.66,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size),
+        gradient: RadialGradient(
+          center: Alignment(-0.2, -0.3),
+          radius: 0.9,
+          colors: [
+            // soften the blood cell colors so the animated background isn't near-black
+            Color.lerp(Colors.red.shade300, Colors.red.shade700, depth)!,
+            Colors.red.shade400.withValues(alpha: 0.95),
+            Colors.red.shade300.withValues(alpha: 0.85),
           ],
+          stops: [0.0, 0.5, 1.0],
         ),
-        child: Center(
-          child: Container(
-            width: size * 0.35,
-            height: size * 0.2,
-            decoration: BoxDecoration(
-              color: Colors.red.shade700.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(20),
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18 * depth),
+            blurRadius: 18 * depth,
+            offset: Offset(0, 6 * depth),
+          ),
+          BoxShadow(
+            color: Colors.white.withValues(alpha: 0.08),
+            blurRadius: 2,
+            offset: Offset(-2, -2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Container(
+          width: size * 0.35,
+          height: size * 0.2,
+          decoration: BoxDecoration(
+            color: Colors.red.shade700.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
           ),
         ),
       ),

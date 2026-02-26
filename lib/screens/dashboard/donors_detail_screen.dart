@@ -357,18 +357,16 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
                   SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton(
+                    child: ElevatedButton(
                       onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        foregroundColor: Colors.black,
-                        side: BorderSide(color: Colors.black, width: 2),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
                         padding: EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      child: Text('Apply Filters', style: TextStyle(fontSize: 16)),
+                      child: Text('Apply Filters', style: TextStyle(color: Colors.white, fontSize: 16)),
                     ),
                   ),
                 ],
@@ -480,11 +478,6 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: Colors.white.withOpacity(0.85),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Colors.black, width: 2),
-          ),
           title: Text('Filter by Location'),
           content: TextField(
             controller: controller,
@@ -497,44 +490,26 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
             ),
           ),
           actions: [
-            OutlinedButton(
+            TextButton(
               onPressed: () {
                 setState(() => _selectedLocation = '');
                 Navigator.pop(context);
               },
-              style: OutlinedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                foregroundColor: Colors.black,
-                side: BorderSide(color: Colors.black, width: 2),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
-              child: Text('Clear'),
+              child: Text('Clear', style: TextStyle(color: Colors.grey)),
             ),
-            OutlinedButton(
+            TextButton(
               onPressed: () => Navigator.pop(context),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                foregroundColor: Colors.black,
-                side: BorderSide(color: Colors.black, width: 2),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
               child: Text('Cancel'),
             ),
-            OutlinedButton(
+            ElevatedButton(
               onPressed: () {
                 setState(() => _selectedLocation = controller.text.trim());
                 Navigator.pop(context);
               },
-              style: OutlinedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                foregroundColor: Colors.black,
-                side: BorderSide(color: Colors.black, width: 2),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
               ),
-              child: Text('Apply'),
+              child: Text('Apply', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -563,10 +538,9 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
 
     return Card(
       margin: EdgeInsets.only(bottom: 12),
-      color: Colors.white.withOpacity(0.85),
+      elevation: 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.black, width: 2),
       ),
       child: Padding(
         padding: EdgeInsets.all(16),
@@ -676,18 +650,18 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
                 ),
                 SizedBox(height: 8),
                 // Contact Button
-                OutlinedButton(
+                ElevatedButton(
                   onPressed: () {
                     _showDonorDetails(donor);
                   },
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    foregroundColor: Colors.black,
-                    side: BorderSide(color: Colors.black, width: 2),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color(0xFFFF7043),
+                    foregroundColor: Colors.white,
                     padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(25),
                     ),
+                    elevation: 2,
                   ),
                   child: Text(
                     'Contact',
@@ -824,7 +798,7 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
                     // Action Button
                     SizedBox(
                       width: double.infinity,
-                      child: OutlinedButton(
+                      child: ElevatedButton(
                         onPressed: () {
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -834,13 +808,12 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
                             ),
                           );
                         },
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          foregroundColor: Colors.black,
-                          side: BorderSide(color: Colors.black, width: 2),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
                           padding: EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         child: Text(

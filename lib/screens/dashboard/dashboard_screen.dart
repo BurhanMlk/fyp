@@ -23,6 +23,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   String _userName = '';
   String _userRole = '';
+  String _userEmail = '';
   int _totalDonors = 0;
   int _totalRecipients = 0;
   int _pendingRequests = 0;
@@ -50,6 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
+        _userEmail = user.email ?? '';
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
         if (userDoc.exists) {
           _userName = userDoc.data()?['name'] ?? 'User';
@@ -83,6 +85,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final currentEmail = prefs.getString('demo_current_email');
+      _userEmail = currentEmail ?? '';
       final users = prefs.getStringList('demo_users') ?? <String>[];
       
       for (final userStr in users) {
@@ -504,68 +507,204 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ];
   }
 
+  String _getConversationId(String userEmail) {
+    // Generate consistent conversation ID for user-admin chat
+    return 'conv_${userEmail.replaceAll('.', '_').replaceAll('@', '_at_')}_admin';
+  }
+
   void _showMessagesDialog() {
     final messageCtl = TextEditingController();
+    final conversationId = _getConversationId(_userEmail);
+    
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.chat, color: Colors.indigo),
-            SizedBox(width: 8),
-            Text('Messages'),
-          ],
-        ),
-        content: SizedBox(
-          width: 400,
-          height: 450,
-          child: Column(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Row(
             children: [
-              Expanded(
-                child: ListView(
-                  children: [
-                    _chatBubble('City Hospital', 'Your blood request has been received. We will contact you shortly.', '10:30 AM', false),
-                    _chatBubble('You', 'Thank you! I need O- blood urgently.', '10:25 AM', true),
-                    _chatBubble('Blood Bank', 'Welcome to Blood Bridge! How can we help?', '09:00 AM', false),
-                  ],
-                ),
-              ),
-              Divider(),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: messageCtl,
-                      decoration: InputDecoration(
-                        hintText: 'Type a message...',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  IconButton(
-                    icon: Icon(Icons.send, color: Colors.indigo),
-                    onPressed: () {
-                      if (messageCtl.text.trim().isNotEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Message sent!')));
-                        messageCtl.clear();
-                      }
-                    },
-                  ),
-                ],
-              ),
+              Icon(Icons.chat, color: Colors.indigo),
+              SizedBox(width: 8),
+              Text('Messages with Admin'),
             ],
           ),
+          content: SizedBox(
+            width: 400,
+            height: 450,
+            child: Column(
+              children: [
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseService.initialized
+                        ? FirebaseFirestore.instance
+                            .collection('messages')
+                            .where('conversationId', isEqualTo: conversationId)
+                            .orderBy('sentAt', descending: true)
+                            .limit(100)
+                            .snapshots()
+                        : null,
+                    builder: (context, snapshot) {
+                      List<Map<String, dynamic>> allMessages = [];
+
+                      if (FirebaseService.initialized) {
+                        if (snapshot.hasData) {
+                          // All messages in this conversation
+                          for (var doc in snapshot.data!.docs) {
+                            final data = doc.data() as Map<String, dynamic>;
+                            final from = data['from'] ?? '';
+                            final isMe = from == _userEmail;
+                            
+                            allMessages.add({
+                              'id': doc.id,
+                              'sender': isMe ? 'You' : 'Admin',
+                              'message': data['message'] ?? '',
+                              'time': data['sentAt'],
+                              'isMe': isMe,
+                              'read': data['read'] ?? false,
+                            });
+                            
+                            // Mark admin messages as read when viewing
+                            if (!isMe && data['read'] == false) {
+                              FirebaseFirestore.instance
+                                  .collection('messages')
+                                  .doc(doc.id)
+                                  .update({'read': true}).catchError((e) => print('Error marking read: $e'));
+                            }
+                          }
+                        }
+                      } else {
+                        // Demo mode - show sample messages
+                        allMessages = [
+                          {'sender': 'Admin', 'message': 'Welcome to Blood Bridge! How can we help?', 'time': null, 'isMe': false},
+                        ];
+                      }
+
+                      if (allMessages.isEmpty) {
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[300]),
+                              SizedBox(height: 16),
+                              Text('No messages yet', style: TextStyle(color: Colors.grey[600])),
+                              SizedBox(height: 8),
+                              Text('Send a message to admin', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return ListView.builder(
+                        reverse: true,
+                        itemCount: allMessages.length,
+                        itemBuilder: (context, index) {
+                          final msg = allMessages[index];
+                          String timeStr = 'Just now';
+                          if (msg['time'] != null) {
+                            final time = (msg['time'] as Timestamp).toDate();
+                            final now = DateTime.now();
+                            final diff = now.difference(time);
+                            
+                            if (diff.inMinutes < 60) {
+                              timeStr = '${diff.inMinutes}m ago';
+                            } else if (diff.inHours < 24) {
+                              timeStr = '${diff.inHours}h ago';
+                            } else {
+                              timeStr = '${diff.inDays}d ago';
+                            }
+                          }
+                          
+                          return _chatBubble(
+                            msg['sender'] ?? '',
+                            msg['message'] ?? '',
+                            timeStr,
+                            msg['isMe'] ?? false,
+                            msg['read'] ?? false,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+                Divider(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: messageCtl,
+                        decoration: InputDecoration(
+                          hintText: 'Type a message to admin...',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(Icons.send, color: Colors.indigo),
+                      onPressed: () async {
+                        final message = messageCtl.text.trim();
+                        if (message.isNotEmpty) {
+                          if (FirebaseService.initialized) {
+                            try {
+                              final now = Timestamp.now();
+                              
+                              // Add message
+                              await FirebaseFirestore.instance.collection('messages').add({
+                                'conversationId': conversationId,
+                                'from': _userEmail,
+                                'to': 'Admin',
+                                'message': message,
+                                'sentAt': now,
+                                'type': 'user_to_admin',
+                                'read': false,
+                                'userRole': _userRole, // Store user role
+                              });
+                              
+                              // Create/update chat conversation
+                              await FirebaseFirestore.instance
+                                  .collection('chats')
+                                  .doc(conversationId)
+                                  .set({
+                                'conversationId': conversationId,
+                                'participants': [_userEmail, 'Admin'],
+                                'participantNames': [_userName, 'Admin'],
+                                'lastMessage': message,
+                                'lastMessageAt': now,
+                                'lastMessageFrom': _userEmail,
+                                'status': 'active',
+                                'unreadCount': FieldValue.increment(1),
+                                'updatedAt': now,
+                              }, SetOptions(merge: true));
+                              
+                              messageCtl.clear();
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Error sending message: $e'), backgroundColor: Colors.red),
+                              );
+                            }
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Message sent! (Demo mode)'), backgroundColor: Colors.green),
+                            );
+                            messageCtl.clear();
+                          }
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text('Close')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Close')),
-        ],
       ),
     );
   }
 
-  Widget _chatBubble(String sender, String message, String time, bool isMe) {
+  Widget _chatBubble(String sender, String message, String time, bool isMe, bool isRead) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -583,10 +722,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SizedBox(height: 4),
             Text(message),
             SizedBox(height: 4),
-            Text(time, style: TextStyle(fontSize: 10, color: Colors.grey)),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(time, style: TextStyle(fontSize: 10, color: Colors.grey)),
+                if (isMe) ...[
+                  SizedBox(width: 4),
+                  _buildTickIndicator(isRead),
+                ],
+              ],
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildTickIndicator(bool isRead) {
+    return Icon(
+      Icons.done_all,
+      size: 14,
+      color: isRead ? Colors.blue : Colors.grey,
     );
   }
 
