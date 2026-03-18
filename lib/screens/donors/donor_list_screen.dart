@@ -78,7 +78,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0FF),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
           'Donors',
@@ -90,7 +90,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.red.shade700, Colors.red.shade400, Colors.pink.shade300],
+              colors: [Color(0xFFB71C1C), Color(0xFFD32F2F), Color(0xFFEF5350)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -109,13 +109,21 @@ class _DonorListScreenState extends State<DonorListScreen> {
               decoration: InputDecoration(
                 hintText: 'Search',
                 hintStyle: TextStyle(fontSize: 14),
-                prefixIcon: Icon(Icons.search, color: Colors.red.shade700, size: 20),
+                prefixIcon: Icon(Icons.search, color: Colors.black, size: 20),
                 filled: true,
                 fillColor: Colors.white,
                 contentPadding: EdgeInsets.symmetric(vertical: 8),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25),
-                  borderSide: BorderSide.none,
+                  borderSide: BorderSide(color: Colors.black, width: 2),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(25),
+                  borderSide: BorderSide(color: Colors.black, width: 2),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(25),
+                  borderSide: BorderSide(color: Colors.black, width: 2),
                 ),
               ),
             ),
@@ -173,7 +181,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFFE5E5) : Colors.grey.shade100,
+          color: isSelected ? const Color(0xFFFDECEC) : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -182,7 +190,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
             Icon(
               icon,
               size: 18,
-              color: isSelected ? const Color(0xFFFF6B6B) : Colors.grey,
+              color: isSelected ? const Color(0xFFB71C1C) : Colors.grey,
             ),
             const SizedBox(width: 4),
             Flexible(
@@ -191,7 +199,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? const Color(0xFFFF6B6B) : Colors.grey,
+                  color: isSelected ? const Color(0xFFB71C1C) : Colors.grey,
                 ),
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
@@ -449,7 +457,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFFFF6B6B),
+                          color: Color(0xFFB71C1C),
                         ),
                       ),
                       const Text(' • ', style: TextStyle(color: Colors.grey)),
@@ -458,7 +466,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
                           location,
                           style: const TextStyle(
                             fontSize: 14,
-                            color: Color(0xFFFF9966),
+                            color: Color(0xFF455A64),
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -479,7 +487,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFE5E5),
+                      color: const Color(0xFFFDECEC),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Text(
@@ -487,7 +495,23 @@ class _DonorListScreenState extends State<DonorListScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFFFF6B6B),
+                        color: Color(0xFFB71C1C),
+                      ),
+                    ),
+                  )
+                else if (role == 'recipient')
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8EEF6),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Recipient',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1E4E79),
                       ),
                     ),
                   )
@@ -495,7 +519,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE5E5FF),
+                      color: const Color(0xFFE6ECF5),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Text(
@@ -503,21 +527,21 @@ class _DonorListScreenState extends State<DonorListScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF6B6BFF),
+                        color: Color(0xFF355070),
                       ),
                     ),
                   ),
                 const SizedBox(height: 8),
-                ElevatedButton(
+                OutlinedButton(
                   onPressed: () => _handleContact(data, docId),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF6B6B),
-                    foregroundColor: Colors.white,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.black,
+                    side: BorderSide(color: Colors.black, width: 2),
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    elevation: 0,
                   ),
                   child: const Text(
                     'Contact',
@@ -557,7 +581,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
       width: 60,
       height: 60,
       decoration: BoxDecoration(
-        color: const Color(0xFFE5E0FF),
+        color: const Color(0xFFE8EEF6),
         shape: BoxShape.circle,
       ),
       child: Center(
@@ -566,7 +590,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
           style: const TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF8B7EFF),
+            color: Color(0xFF355070),
           ),
         ),
       ),
@@ -618,13 +642,15 @@ class _DonorListScreenState extends State<DonorListScreen> {
             child: const Text('Close'),
           ),
           if (contact != 'No contact')
-            ElevatedButton(
+            OutlinedButton(
               onPressed: () {
                 final uri = Uri.parse('tel:$contact');
                 launchUrl(uri);
               },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF6B6B),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.black,
+                side: BorderSide(color: Colors.black, width: 2),
               ),
               child: const Text('Call'),
             ),
@@ -636,7 +662,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: const Color(0xFFFF6B6B)),
+        Icon(icon, size: 20, color: const Color(0xFFB71C1C)),
         const SizedBox(width: 8),
         Text(
           '$label: ',

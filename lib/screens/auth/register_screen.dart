@@ -29,6 +29,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailCtl = TextEditingController();
   final _passCtl = TextEditingController();
   final _contactCtl = TextEditingController();
+  final _cnicCtl = TextEditingController();
   final _designationCtl = TextEditingController();
   final _ageCtl = TextEditingController();
   final _locationCtl = TextEditingController();
@@ -47,6 +48,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailCtl.dispose();
     _passCtl.dispose();
     _contactCtl.dispose();
+    _cnicCtl.dispose();
     _designationCtl.dispose();
     _ageCtl.dispose();
     _locationCtl.dispose();
@@ -59,6 +61,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final email = _emailCtl.text.trim();
     final pass = _passCtl.text;
     final contact = _contactCtl.text.trim();
+    final cnic = _cnicCtl.text.trim();
     final blood = _bloodGroup;
     final age = _ageCtl.text.trim();
     final gender = _gender;
@@ -99,6 +102,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (contact.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please enter your contact number'), backgroundColor: Colors.red, duration: Duration(seconds: 3))
+      );
+      return;
+    }
+    if (cnic.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please enter your CNIC'), backgroundColor: Colors.red, duration: Duration(seconds: 3))
+      );
+      return;
+    }
+    if (!RegExp(r'^\d{5}-\d{7}-\d$|^\d{13}$').hasMatch(cnic)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('CNIC must be in 12345-1234567-1 or 13-digit format'), backgroundColor: Colors.red, duration: Duration(seconds: 3))
       );
       return;
     }
@@ -148,6 +163,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'name': name,
           'email': email,
           'contact': contact,
+          'cnic': cnic,
           'bloodGroup': blood,
           'role': _role,
           'designation': designation,
@@ -220,6 +236,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'email': email,
           'password': pass,
           'contact': contact,
+          'cnic': cnic,
           'bloodGroup': blood,
           'role': _role,
           'designation': designation,
@@ -261,6 +278,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final ImageSource? source = await showDialog<ImageSource>(
         context: context,
         builder: (context) => AlertDialog(
+          backgroundColor: Colors.white.withOpacity(0.92),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.black, width: 2),
+          ),
           title: Text('Choose Photo Source'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -410,14 +432,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          ElevatedButton.icon(
+                          OutlinedButton.icon(
                             onPressed: _pickImage,
                             icon: Icon(Icons.upload_file),
                             label: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 4.0),
                               child: Text('Upload Photo', style: TextStyle(fontSize: 16)),
                             ),
-                            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              foregroundColor: Colors.black,
+                              side: BorderSide(color: Colors.black, width: 2),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
                           ),
                           SizedBox(width: 8),
                           if (_pickedBytes != null)
@@ -531,6 +559,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.black)),
                         ),
                         keyboardType: TextInputType.phone,
+                      ),
+                      SizedBox(height: 12),
+                      // CNIC
+                      TextField(
+                        controller: _cnicCtl,
+                        style: TextStyle(color: Colors.black),
+                        decoration: InputDecoration(
+                          hintText: 'CNIC (12345-1234567-1)',
+                          hintStyle: TextStyle(color: Colors.black54),
+                          filled: false,
+                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.black.withOpacity(0.3))),
+                          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.black)),
+                        ),
+                        keyboardType: TextInputType.number,
                       ),
                       SizedBox(height: 12),
                       // Location

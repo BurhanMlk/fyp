@@ -6,7 +6,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     
     <application
-        android:label="blood_bridge_flutter"
+        android:label="Blood Bridge"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

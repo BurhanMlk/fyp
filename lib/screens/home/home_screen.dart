@@ -142,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFFFF6B6B), Color(0xFFFF8787), Color(0xFFFFA5A5)],
+              colors: [Color(0xFFD84343), Color(0xFFEF5350), Color(0xFFFF8A80)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -158,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
             DrawerHeader(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFFFF6B6B).withOpacity(0.9), Color(0xFFFF8787).withOpacity(0.9), Color(0xFFFFA5A5).withOpacity(0.9)],
+                  colors: [Color(0xFFD84343).withOpacity(0.9), Color(0xFFEF5350).withOpacity(0.9), Color(0xFFFF8A80).withOpacity(0.9)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),

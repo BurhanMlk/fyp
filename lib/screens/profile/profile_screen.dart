@@ -87,6 +87,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             data['gender'] == null || 
             data['location'] == null;
 
+        final role = data['role'] ?? '';
+        final blood = data['bloodGroup'] ?? '';
+        final approved = data['approved'] == true;
+        final verificationStatus = (data['verificationStatus'] ?? '').toString().toLowerCase();
+        final verified = data['verified'] == true || verificationStatus == 'approved';
+        final bool showDonorBlueTick = role == 'donor' && verified;
+
         // Build avatar from photoData if present (base64), otherwise default icon
         Widget avatar;
         try {
@@ -154,9 +161,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         }
 
-        final role = data['role'] ?? '';
-        final blood = data['bloodGroup'] ?? '';
-        final approved = data['approved'] == true;
+        if (showDonorBlueTick) {
+          avatar = Stack(
+            clipBehavior: Clip.none,
+            children: [
+              avatar,
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Container(
+                  padding: EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.blue, width: 1.2),
+                  ),
+                  child: Icon(Icons.verified, color: Colors.blue, size: 18),
+                ),
+              ),
+            ],
+          );
+        }
+
         final name = data['name'] ?? 'No name';
         final age = data['age']?.toString() ?? 'N/A';
         final gender = data['gender'] ?? 'N/A';
@@ -350,26 +376,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                             if (role == 'donor') ...[
                               SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _buildInfoTile(
-                                      icon: approved ? Icons.verified : Icons.pending,
-                                      title: 'Approval Status',
-                                      value: approved ? 'Approved' : 'Pending Approval',
-                                      valueColor: approved ? Colors.green[700] : Colors.orange[700],
-                                    ),
-                                  ),
-                                  SizedBox(width: 12),
-                                  Expanded(
-                                    child: _buildInfoTile(
-                                      icon: data['hasDonated'] == true ? Icons.check_circle : Icons.schedule,
-                                      title: 'Donation Status',
-                                      value: data['hasDonated'] == true ? 'Donated' : 'Not Donated',
-                                      valueColor: data['hasDonated'] == true ? Colors.green[700] : Colors.grey[700],
-                                    ),
-                                  ),
-                                ],
+                              _buildInfoTile(
+                                icon: data['hasDonated'] == true ? Icons.check_circle : Icons.schedule,
+                                title: 'Donation Status',
+                                value: data['hasDonated'] == true ? 'Donated' : 'Not Donated',
+                                valueColor: data['hasDonated'] == true ? Colors.green[700] : Colors.grey[700],
+                              ),
+                            ],
+                            if (role == 'recipient') ...[
+                              SizedBox(height: 12),
+                              _buildInfoTile(
+                                icon: verified ? Icons.verified : Icons.pending_actions,
+                                title: 'Verification Status',
+                                value: verified ? 'Verified' : 'Pending Verification',
+                                valueColor: verified ? Colors.blue[700] : Colors.orange[700],
                               ),
                             ],
                           ],

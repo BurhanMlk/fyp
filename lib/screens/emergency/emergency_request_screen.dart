@@ -25,6 +25,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
 
   final List<String> _bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
   final List<String> _urgencies = ['Low', 'Medium', 'High', 'Critical'];
+  static const double _controlHeight = 48;
 
   @override
   void dispose() {
@@ -134,6 +135,33 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
     }
   }
 
+  InputDecoration _compactFieldDecoration({
+    String? hintText,
+    Widget? prefixIcon,
+  }) {
+    return InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.8),
+      hintText: hintText,
+      hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+      prefixIcon: prefixIcon,
+      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(25),
+        borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(25),
+        borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(25),
+        borderSide: BorderSide(color: Colors.red.shade400, width: 1.5),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -160,7 +188,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.red.shade50, Colors.white],
+            colors: [Color(0xFFFFF5F5), Colors.white],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -177,14 +205,14 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                   padding: EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [Colors.red.shade700, Colors.red.shade500],
+                      colors: [Colors.red.shade400, Colors.red.shade300],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.red.withOpacity(0.3),
+                        color: Colors.red.withOpacity(0.2),
                         blurRadius: 10,
                         offset: Offset(0, 4),
                       ),
@@ -253,21 +281,19 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           ],
                         ),
                         SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          value: _blood,
-                          items: _bloodTypes.map((b) => DropdownMenuItem(
-                            value: b,
-                            child: Text(b, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                          )).toList(),
-                          onChanged: (v) => setState(() => _blood = v ?? _blood),
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.red.shade50,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        SizedBox(
+                          height: _controlHeight,
+                          child: DropdownButtonFormField<String>(
+                            value: _blood,
+                            isExpanded: true,
+                            itemHeight: _controlHeight,
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                            items: _bloodTypes.map((b) => DropdownMenuItem(
+                              value: b,
+                              child: Text(b, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                            )).toList(),
+                            onChanged: (v) => setState(() => _blood = v ?? _blood),
+                            decoration: _compactFieldDecoration(),
                           ),
                         ),
                       ],
@@ -300,36 +326,34 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           ],
                         ),
                         SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          value: _urgency,
-                          items: _urgencies.map((u) => DropdownMenuItem(
-                            value: u,
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: u == 'Critical' ? Colors.red.shade900 : 
-                                           u == 'High' ? Colors.red.shade700 : 
-                                           u == 'Medium' ? Colors.orange.shade600 : Colors.blue.shade600,
-                                    shape: BoxShape.circle,
+                        SizedBox(
+                          height: _controlHeight,
+                          child: DropdownButtonFormField<String>(
+                            value: _urgency,
+                            isExpanded: true,
+                            itemHeight: _controlHeight,
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                            items: _urgencies.map((u) => DropdownMenuItem(
+                              value: u,
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: BoxDecoration(
+                                      color: u == 'Critical' ? Colors.red.shade900 :
+                                             u == 'High' ? Colors.red.shade700 :
+                                             u == 'Medium' ? Colors.orange.shade600 : Colors.blue.shade600,
+                                      shape: BoxShape.circle,
+                                    ),
                                   ),
-                                ),
-                                SizedBox(width: 8),
-                                Text(u, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                          )).toList(),
-                          onChanged: (v) => setState(() => _urgency = v ?? _urgency),
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: _getUrgencyColor().withOpacity(0.1),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  SizedBox(width: 8),
+                                  Text(u, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                                ],
+                              ),
+                            )).toList(),
+                            onChanged: (v) => setState(() => _urgency = v ?? _urgency),
+                            decoration: _compactFieldDecoration(),
                           ),
                         ),
                       ],
@@ -362,19 +386,13 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           ],
                         ),
                         SizedBox(height: 12),
-                        TextField(
-                          controller: _qtyCtl,
-                          keyboardType: TextInputType.number,
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.red.shade50,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            hintText: 'Enter number of units',
+                        SizedBox(
+                          height: _controlHeight,
+                          child: TextField(
+                            controller: _qtyCtl,
+                            keyboardType: TextInputType.number,
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                            decoration: _compactFieldDecoration(hintText: 'Enter number of units'),
                           ),
                         ),
                       ],
@@ -407,20 +425,16 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           ],
                         ),
                         SizedBox(height: 12),
-                        TextField(
-                          controller: _phoneCtl,
-                          keyboardType: TextInputType.phone,
-                          style: TextStyle(fontSize: 16),
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.red.shade50,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
+                        SizedBox(
+                          height: _controlHeight,
+                          child: TextField(
+                            controller: _phoneCtl,
+                            keyboardType: TextInputType.phone,
+                            style: TextStyle(fontSize: 14),
+                            decoration: _compactFieldDecoration(
+                              hintText: 'Enter your contact number',
+                              prefixIcon: Icon(Icons.call, color: Colors.red.shade700, size: 18),
                             ),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            hintText: 'Enter your contact number',
-                            prefixIcon: Icon(Icons.call, color: Colors.red.shade700),
                           ),
                         ),
                       ],
@@ -453,65 +467,69 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           ],
                         ),
                         SizedBox(height: 12),
-                        InkWell(
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: _requiredDate ?? DateTime.now(),
-                              firstDate: DateTime.now(),
-                              lastDate: DateTime.now().add(Duration(days: 365)),
-                              builder: (context, child) {
-                                return Theme(
-                                  data: Theme.of(context).copyWith(
-                                    colorScheme: ColorScheme.light(
-                                      primary: Colors.red.shade700,
-                                      onPrimary: Colors.white,
-                                      surface: Colors.white,
-                                      onSurface: Colors.black,
+                        SizedBox(
+                          height: _controlHeight,
+                          child: InkWell(
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: _requiredDate ?? DateTime.now(),
+                                firstDate: DateTime.now(),
+                                lastDate: DateTime.now().add(Duration(days: 365)),
+                                builder: (context, child) {
+                                  return Theme(
+                                    data: Theme.of(context).copyWith(
+                                      colorScheme: ColorScheme.light(
+                                        primary: Colors.red.shade700,
+                                        onPrimary: Colors.white,
+                                        surface: Colors.white,
+                                        onSurface: Colors.black,
+                                      ),
                                     ),
-                                  ),
-                                  child: child!,
-                                );
-                              },
-                            );
-                            if (picked != null) {
-                              setState(() => _requiredDate = picked);
-                            }
-                          },
-                          child: Container(
-                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: _requiredDate == null ? Colors.red.shade300 : Colors.red.shade700,
-                                width: _requiredDate == null ? 1 : 2,
+                                    child: child!,
+                                  );
+                                },
+                              );
+                              if (picked != null) {
+                                setState(() => _requiredDate = picked);
+                              }
+                            },
+                            child: Container(
+                              padding: EdgeInsets.symmetric(horizontal: 16),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.8),
+                                borderRadius: BorderRadius.circular(25),
+                                border: Border.all(
+                                  color: Colors.grey.shade300,
+                                  width: 1,
+                                ),
                               ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.date_range,
-                                  color: _requiredDate == null ? Colors.red.shade400 : Colors.red.shade700,
-                                ),
-                                SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _requiredDate == null
-                                        ? 'Select required date'
-                                        : '${_requiredDate!.day}/${_requiredDate!.month}/${_requiredDate!.year}',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: _requiredDate == null ? FontWeight.normal : FontWeight.w600,
-                                      color: _requiredDate == null ? Colors.grey.shade600 : Colors.red.shade800,
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.date_range,
+                                    size: 18,
+                                    color: _requiredDate == null ? Colors.grey.shade500 : Colors.grey.shade700,
+                                  ),
+                                  SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      _requiredDate == null
+                                          ? 'Select required date'
+                                          : '${_requiredDate!.day}/${_requiredDate!.month}/${_requiredDate!.year}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: _requiredDate == null ? FontWeight.normal : FontWeight.w600,
+                                        color: _requiredDate == null ? Colors.grey.shade600 : Colors.grey.shade800,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                Icon(
-                                  Icons.arrow_drop_down,
-                                  color: Colors.red.shade700,
-                                ),
-                              ],
+                                  Icon(
+                                    Icons.arrow_drop_down,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -551,10 +569,10 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           style: TextStyle(fontSize: 16),
                           decoration: InputDecoration(
                             filled: true,
-                            fillColor: Colors.red.shade50,
+                            fillColor: Colors.white.withOpacity(0.8),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
+                              borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
                             ),
                             contentPadding: EdgeInsets.all(16),
                             hintText: 'Describe your emergency situation, location, etc.',
@@ -568,56 +586,58 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                 SizedBox(height: 24),
 
                 // Submit Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
-                    onPressed: _sending ? null : _sendRequest,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                Center(
+                  child: SizedBox(
+                    width: 250,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: _sending ? null : _sendRequest,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                        ),
+                        elevation: 3,
                       ),
-                      elevation: 4,
+                      child: _sending
+                          ? Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: BloodBridgeLoader(
+                                    size: 20,
+                                    duration: Duration(milliseconds: 600),
+                                  ),
+                                ),
+                                SizedBox(width: 12),
+                                Text(
+                                  'Sending...',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.send, color: Colors.white, size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Send Request',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
                     ),
-                    child: _sending
-                        ? Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: BloodBridgeLoader(
-                                  size: 20,
-                                  duration: Duration(milliseconds: 600),
-                                ),
-                              ),
-                              SizedBox(width: 12),
-                              Text(
-                                'Sending...',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.send, color: Colors.white),
-                              SizedBox(width: 8),
-                              Text(
-                                'Send Emergency Request',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
                   ),
                 ),
                 SizedBox(height: 20),

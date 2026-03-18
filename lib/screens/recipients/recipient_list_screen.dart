@@ -58,7 +58,7 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0FF),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
           'Recipients',
@@ -70,7 +70,7 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.red.shade700, Colors.red.shade400, Colors.pink.shade300],
+              colors: [Color(0xFF1E4E79), Color(0xFF2F6B9A), Color(0xFF5C8DB6)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -108,7 +108,7 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                   height: 60,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.pink.shade200, width: 2),
+                    border: Border.all(color: Color(0xFFB6C8DB), width: 2),
                     image: DecorationImage(image: img, fit: BoxFit.cover),
                   ),
                 );
@@ -117,9 +117,9 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                 width: 60,
                 height: 60,
                 decoration: BoxDecoration(
-                  color: Color(0xFFFFE5F0),
+                  color: Color(0xFFE8EEF6),
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.pink.shade200, width: 2),
+                  border: Border.all(color: Color(0xFFB6C8DB), width: 2),
                 ),
                 child: Center(
                   child: Text(
@@ -127,7 +127,7 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: Colors.pink.shade700,
+                      color: Color(0xFF1E4E79),
                     ),
                   ),
                 ),
@@ -141,14 +141,14 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.white, Color(0xFFFFF5F8)],
+                  colors: [Colors.white, Color(0xFFF6F9FC)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.pink.withOpacity(0.1),
+                    color: Color(0xFF1E4E79).withOpacity(0.08),
                     blurRadius: 15,
                     offset: const Offset(0, 5),
                   ),
@@ -278,7 +278,7 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                   height: 60,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.pink.shade200, width: 2),
+                    border: Border.all(color: Color(0xFFB6C8DB), width: 2),
                     image: DecorationImage(image: img, fit: BoxFit.cover),
                   ),
                 );
@@ -287,9 +287,9 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                 width: 60,
                 height: 60,
                 decoration: BoxDecoration(
-                  color: Color(0xFFFFE5F0),
+                  color: Color(0xFFE8EEF6),
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.pink.shade200, width: 2),
+                  border: Border.all(color: Color(0xFFB6C8DB), width: 2),
                 ),
                 child: Center(
                   child: Text(
@@ -297,7 +297,7 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: Colors.pink.shade700,
+                      color: Color(0xFF1E4E79),
                     ),
                   ),
                 ),
@@ -311,14 +311,14 @@ class _RecipientListScreenState extends State<RecipientListScreen> {
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.white, Color(0xFFFFF5F8)],
+                  colors: [Colors.white, Color(0xFFF6F9FC)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.pink.withOpacity(0.1),
+                    color: Color(0xFF1E4E79).withOpacity(0.08),
                     blurRadius: 15,
                     offset: const Offset(0, 5),
                   ),

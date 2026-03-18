@@ -38,7 +38,7 @@ class DonorDetailScreen extends StatelessWidget {
     final designation = donorData['designation'] ?? '';
     
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0FF),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
           name,
@@ -50,7 +50,7 @@ class DonorDetailScreen extends StatelessWidget {
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.red.shade700, Colors.red.shade400, Colors.pink.shade300],
+              colors: [Color(0xFFB71C1C), Color(0xFFD32F2F), Color(0xFFEF5350)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -67,7 +67,7 @@ class DonorDetailScreen extends StatelessWidget {
               width: double.infinity,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.red.shade700, Colors.red.shade400, Colors.pink.shade300],
+                  colors: [Color(0xFFB71C1C), Color(0xFFD32F2F), Color(0xFFEF5350)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -159,7 +159,7 @@ class DonorDetailScreen extends StatelessWidget {
                     icon: Icons.bloodtype,
                     title: 'Blood Group',
                     value: bloodGroup,
-                    color: const Color(0xFFFF6B6B),
+                    color: const Color(0xFFB71C1C),
                   ),
                   const SizedBox(height: 12),
 
@@ -168,7 +168,7 @@ class DonorDetailScreen extends StatelessWidget {
                     icon: Icons.location_on,
                     title: 'Location',
                     value: location,
-                    color: const Color(0xFFFF9966),
+                    color: const Color(0xFF455A64),
                   ),
                   const SizedBox(height: 12),
 
@@ -214,35 +214,35 @@ class DonorDetailScreen extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: ElevatedButton.icon(
+                          child: OutlinedButton.icon(
                             onPressed: () => _makeCall(contact, context),
                             icon: const Icon(Icons.call),
                             label: const Text('Call'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF4CAF50),
-                              foregroundColor: Colors.white,
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              foregroundColor: Colors.black,
+                              side: BorderSide(color: Colors.black, width: 2),
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              elevation: 0,
                             ),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: ElevatedButton.icon(
+                          child: OutlinedButton.icon(
                             onPressed: () => _sendSms(contact, name, context),
                             icon: const Icon(Icons.message),
                             label: const Text('SMS'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2196F3),
-                              foregroundColor: Colors.white,
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              foregroundColor: Colors.black,
+                              side: BorderSide(color: Colors.black, width: 2),
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              elevation: 0,
                             ),
                           ),
                         ),
@@ -251,18 +251,18 @@ class DonorDetailScreen extends StatelessWidget {
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton.icon(
+                      child: OutlinedButton.icon(
                         onPressed: () => _sendEmail(email, context),
                         icon: const Icon(Icons.email),
                         label: const Text('Send Email'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF6B6B),
-                          foregroundColor: Colors.white,
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: Colors.black,
+                          side: BorderSide(color: Colors.black, width: 2),
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          elevation: 0,
                         ),
                       ),
                     ),
@@ -323,7 +323,7 @@ class DonorDetailScreen extends StatelessWidget {
           style: const TextStyle(
             fontSize: 48,
             fontWeight: FontWeight.bold,
-            color: Color(0xFFFF6B6B),
+            color: Color(0xFFB71C1C),
           ),
         ),
       ),

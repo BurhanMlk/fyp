@@ -281,7 +281,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           });
         }
 
-        // Load today's messages
+        // Load today's messages (exclude soft-deleted messages)
         final today = DateTime.now();
         final startOfDay = DateTime(today.year, today.month, today.day);
         
@@ -293,6 +293,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         
         for (final doc in messagesSnap.docs) {
           final data = doc.data();
+          // Skip deleted messages
+          if (data['deleted'] == true) continue;
           messages.add({
             'id': doc.id,
             'from': data['from'] ?? 'Unknown',
@@ -474,9 +476,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
             },
             icon: Icon(Icons.message),
             label: Text('View Messages'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFF7B1FA2),
-              foregroundColor: Colors.white,
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
             ),
           ),
         ],
@@ -687,6 +690,469 @@ class _AdminDashboardState extends State<AdminDashboard> {
     await _loadCommunicationData();
   }
 
+  void _confirmDeleteAllMessages() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete All Messages'),
+          ],
+        ),
+        content: Text('Are you sure you want to delete ALL messages from today? This action cannot be undone.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete_sweep),
+            label: Text('Delete All'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              await _deleteAllMessages();
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('All messages deleted successfully'), backgroundColor: Colors.green),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteAllMessages() async {
+    if (FirebaseService.initialized) {
+      try {
+        final today = DateTime.now();
+        final startOfDay = DateTime(today.year, today.month, today.day);
+        
+        final messagesSnap = await FirebaseFirestore.instance
+            .collection('messages')
+            .where('sentAt', isGreaterThanOrEqualTo: startOfDay)
+            .get();
+        
+        // Soft delete - mark as deleted instead of removing
+        for (final doc in messagesSnap.docs) {
+          await doc.reference.update({'deleted': true, 'deletedAt': Timestamp.now()});
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } else {
+      // Demo mode - mark messages as deleted
+      for (var msg in _messagesToday) {
+        msg['deleted'] = true;
+      }
+    }
+    await _loadCommunicationData();
+    setState(() {}); // Force rebuild
+  }
+
+  void _showEditMessageDialog(Map<String, dynamic> message) {
+    final messageCtl = TextEditingController(text: message['message'] ?? '');
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.edit, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Edit Message'),
+          ],
+        ),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'From: ${message['from']} → To: ${message['to']}',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: messageCtl,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: 'Message',
+                  hintText: 'Enter message text...',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.save),
+            label: Text('Save Changes'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              final updatedText = messageCtl.text.trim();
+              if (updatedText.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Message cannot be empty'), backgroundColor: Colors.orange),
+                );
+                return;
+              }
+              await _updateMessage(message['id'], updatedText);
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Message updated successfully'), backgroundColor: Colors.green),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _updateMessage(String messageId, String newText) async {
+    if (FirebaseService.initialized) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('messages')
+            .doc(messageId)
+            .update({'message': newText});
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } else {
+      // Demo mode - update in local list
+      setState(() {
+        final index = _messagesToday.indexWhere((m) => m['id'] == messageId);
+        if (index != -1) {
+          _messagesToday[index]['message'] = newText;
+        }
+      });
+    }
+    await _loadCommunicationData();
+  }
+
+  void _confirmDeleteMessage(Map<String, dynamic> message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete Message'),
+          ],
+        ),
+        content: Text('Are you sure you want to delete this message? This action cannot be undone.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete),
+            label: Text('Delete'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              await _deleteMessage(message['id']);
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Message deleted successfully'), backgroundColor: Colors.green),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteMessage(String messageId) async {
+    if (FirebaseService.initialized) {
+      try {
+        // Soft delete - mark as deleted instead of removing
+        await FirebaseFirestore.instance
+            .collection('messages')
+            .doc(messageId)
+            .update({'deleted': true, 'deletedAt': Timestamp.now()});
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } else {
+      // Demo mode - mark as deleted
+      final msgIndex = _messagesToday.indexWhere((m) => m['id'] == messageId);
+      if (msgIndex != -1) {
+        _messagesToday[msgIndex]['deleted'] = true;
+      }
+    }
+    await _loadCommunicationData();
+    setState(() {}); // Force rebuild
+  }
+
+  void _confirmDeleteAllDonors() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete All Donors'),
+          ],
+        ),
+        content: Text('Are you sure you want to delete ALL donors? This action cannot be undone and will permanently remove all donor accounts from the system.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete_sweep),
+            label: Text('Delete All'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              await _deleteAllDonors();
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('All donors deleted'), backgroundColor: Colors.orange),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteAllDonors() async {
+    if (FirebaseService.initialized) {
+      try {
+        final donorsSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'donor')
+            .get();
+        
+        for (final doc in donorsSnap.docs) {
+          await doc.reference.delete();
+        }
+        
+        // Reload stats
+        _loadStats();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } else {
+      // Demo mode - remove all donors from the list
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('demo_users') ?? <String>[];
+      final nonDonors = list.where((s) {
+        try {
+          final Map<String, dynamic> u = jsonDecode(s);
+          return (u['role'] ?? '') != 'donor';
+        } catch (_) {
+          return true;
+        }
+      }).toList();
+      await prefs.setStringList('demo_users', nonDonors);
+      
+      // Reload stats
+      _loadStats();
+    }
+    setState(() {
+      // Trigger rebuild
+    });
+  }
+
+  void _confirmDeleteAllRecipients() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete All Recipients'),
+          ],
+        ),
+        content: Text('Are you sure you want to delete ALL recipients? This action cannot be undone and will permanently remove all recipient accounts from the system.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete_sweep),
+            label: Text('Delete All'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              await _deleteAllRecipients();
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('All recipients deleted'), backgroundColor: Colors.orange),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteAllRecipients() async {
+    if (FirebaseService.initialized) {
+      try {
+        final recipientsSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'recipient')
+            .get();
+        
+        for (final doc in recipientsSnap.docs) {
+          await doc.reference.delete();
+        }
+        
+        // Reload stats
+        _loadStats();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } else {
+      // Demo mode - remove all recipients from the list
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('demo_users') ?? <String>[];
+      final nonRecipients = list.where((s) {
+        try {
+          final Map<String, dynamic> u = jsonDecode(s);
+          return (u['role'] ?? '') != 'recipient';
+        } catch (_) {
+          return true;
+        }
+      }).toList();
+      await prefs.setStringList('demo_users', nonRecipients);
+      
+      // Reload stats
+      _loadStats();
+    }
+    setState(() {
+      // Trigger rebuild
+    });
+  }
+
   @override
   void dispose() {
     _broadcastMessageController.dispose();
@@ -712,7 +1178,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         iconTheme: IconThemeData(color: Colors.white),
       ),
       drawer: _buildDrawer(),
-      backgroundColor: Color(0xFFF5F5F5),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: _buildCurrentModule(),
       ),
@@ -1220,6 +1686,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Expanded(
                 child: Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
               ),
+              // Delete All Donors button (only for all_donors view)
+              if (_currentModule == 'all_donors')
+                IconButton(
+                  icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
+                  tooltip: 'Delete All Donors',
+                  onPressed: () => _confirmDeleteAllDonors(),
+                ),
+              // Delete All Recipients button (only for recipients view)
+              if (_currentModule == 'recipients')
+                IconButton(
+                  icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
+                  tooltip: 'Delete All Recipients',
+                  onPressed: () => _confirmDeleteAllRecipients(),
+                ),
             ],
           ),
         ),
@@ -1227,23 +1707,28 @@ class _AdminDashboardState extends State<AdminDashboard> {
           child: content,
         ),
         if (_selectedItem != null)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Details', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
-                const SizedBox(height: 12),
-                Card(
-                  elevation: 4,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  color: Colors.white,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: _buildDetailsPanel(),
+          SizedBox(
+            height: 360,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Details', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      color: Colors.white,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16.0),
+                        child: _buildDetailsPanel(),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
       ],
@@ -1740,6 +2225,40 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           Text('${rd['contact'] ?? 'N/A'}', style: TextStyle(color: Colors.grey[700], fontSize: 12)),
                         ],
                       ),
+                      SizedBox(height: 12),
+                      // Edit and Delete buttons
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _showEditUserDialog(rd, d.id, true),
+                            icon: Icon(Icons.edit, size: 16),
+                            label: Text('Edit'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue[700],
+                              side: BorderSide(color: Colors.blue[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _confirmDeleteUser(rd, d.id, true),
+                            icon: Icon(Icons.delete, size: 16),
+                            label: Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red[700],
+                              side: BorderSide(color: Colors.red[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -1844,6 +2363,50 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           Icon(Icons.phone, size: 14, color: Colors.grey[600]),
                           SizedBox(width: 4),
                           Text('${rd['contact'] ?? 'N/A'}', style: TextStyle(color: Colors.grey[700], fontSize: 12)),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      // Edit and Delete buttons (demo mode)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              // Find actual index in full list
+                              final fullList = list;
+                              final actualIndex = fullList.indexOf(donors[i]);
+                              _showEditUserDialog(rd, actualIndex.toString(), false);
+                            },
+                            icon: Icon(Icons.edit, size: 16),
+                            label: Text('Edit'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue[700],
+                              side: BorderSide(color: Colors.blue[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              // Find actual index in full list
+                              final fullList = list;
+                              final actualIndex = fullList.indexOf(donors[i]);
+                              _confirmDeleteUser(rd, actualIndex.toString(), false);
+                            },
+                            icon: Icon(Icons.delete, size: 16),
+                            label: Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red[700],
+                              side: BorderSide(color: Colors.red[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -1988,6 +2551,40 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                   ),
                                 ),
                               ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      // Edit and Delete buttons
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _showEditUserDialog(rd, d.id, true),
+                            icon: Icon(Icons.edit, size: 16),
+                            label: Text('Edit'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue[700],
+                              side: BorderSide(color: Colors.blue[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _confirmDeleteUser(rd, d.id, true),
+                            icon: Icon(Icons.delete, size: 16),
+                            label: Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red[700],
+                              side: BorderSide(color: Colors.red[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                             ),
                           ),
                         ],
@@ -2342,17 +2939,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
     
     return Container(
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: type == 'emergency' 
-              ? [Color(0xFFFFF5F5), Color(0xFFFFEBEE)] 
-              : [Color(0xFFF5F5FF), Color(0xFFEDE7F6)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: type == 'emergency' ? Colors.red.shade200 : Colors.blue.shade200,
-          width: 2,
+          color: Colors.black.withOpacity(0.15),
+          width: 1.5,
         ),
       ),
       child: Column(
@@ -2363,24 +2954,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
           Container(
             padding: EdgeInsets.all(16),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: type == 'emergency'
-                    ? [Colors.red[700]!, Colors.red[600]!]
-                    : [Colors.blue[700]!, Colors.blue[600]!],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              color: Colors.white,
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(14),
                 topRight: Radius.circular(14),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: (type == 'emergency' ? Colors.red : Colors.blue).withOpacity(0.3),
-                  blurRadius: 8,
-                  offset: Offset(0, 4),
+              border: Border(
+                bottom: BorderSide(
+                  color: type == 'emergency' ? Colors.red.shade200 : Colors.blue.shade200,
+                  width: 1.5,
                 ),
-              ],
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2389,7 +2973,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   children: [
                     Icon(
                       type == 'emergency' ? Icons.emergency_share : Icons.info_outline,
-                      color: Colors.white,
+                      color: type == 'emergency' ? Colors.red[700] : Colors.blue[700],
                       size: 28,
                     ),
                     SizedBox(width: 12),
@@ -2398,7 +2982,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
-                        color: Colors.white,
+                        color: type == 'emergency' ? Colors.red[700] : Colors.blue[700],
                         letterSpacing: 1.5,
                       ),
                     ),
@@ -2412,7 +2996,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       _selectedId = null;
                     });
                   },
-                  icon: Icon(Icons.close, color: Colors.white),
+                  icon: Icon(Icons.close, color: type == 'emergency' ? Colors.red[700] : Colors.blue[700]),
                   tooltip: 'Close',
                 ),
               ],
@@ -2423,7 +3007,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           Padding(
             padding: EdgeInsets.all(16),
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: 300),
+              constraints: BoxConstraints(maxHeight: 180),
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2508,91 +3092,43 @@ class _AdminDashboardState extends State<AdminDashboard> {
               runSpacing: 12,
               alignment: WrapAlignment.end,
               children: [
-                if (type == 'donor_request') 
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF4CAF50), Color(0xFF66BB6A)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                if (type == 'donor_request')
+                  OutlinedButton.icon(
+                    icon: Icon(Icons.check_circle, size: 20, color: Colors.white),
+                    label: Text(
+                      'Approve',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
                       ),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Color(0xFF4CAF50).withOpacity(0.4),
-                          blurRadius: 8,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
                     ),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shadowColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.check_circle, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Approve',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                      onPressed: () => _approveSelected(),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Color(0xFF2E7D32),
+                      side: BorderSide(color: Colors.black, width: 2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                     ),
+                    onPressed: () => _approveSelected(),
                   ),
                 if (type == 'emergency')
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFD32F2F), Color(0xFFEF5350)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                  OutlinedButton.icon(
+                    icon: Icon(Icons.done_all, size: 20, color: Colors.white),
+                    label: Text(
+                      'Mark Handled',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
                       ),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Color(0xFFD32F2F).withOpacity(0.4),
-                          blurRadius: 8,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
                     ),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shadowColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.done_all, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Mark Handled',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                      onPressed: () => _handleSelectedEmergency(),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Color(0xFFD32F2F),
+                      side: BorderSide(color: Colors.black, width: 2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                     ),
+                    onPressed: () => _handleSelectedEmergency(),
                   ),
               ],
             ),
@@ -2718,33 +3254,57 @@ class _AdminDashboardState extends State<AdminDashboard> {
             itemBuilder: (context, i) {
               final d = docs[i];
               final data = d.data() as Map<String, dynamic>;
+              final role = (data['role'] ?? '').toString();
+              final isDonor = role == 'donor';
               final approved = data['approved'] ?? false;
+              final verificationStatus = (data['verificationStatus'] ?? '').toString().toLowerCase();
+              final verified = data['verified'] == true || verificationStatus == 'approved';
                   return ListTile(
                     title: Text(data['name'] ?? 'No name'),
                     subtitle: Text('${data['bloodGroup'] ?? ''} • ${data['role'] ?? ''}'),
                     onTap: () {
                       Navigator.of(context).push(MaterialPageRoute(builder: (_) => UserProfileScreen(firebaseUid: d.id)));
                     },
-                    trailing: ElevatedButton(
-                      onPressed: approved ? null : () async {
-                        await FirebaseFirestore.instance.collection('users').doc(d.id).update({'approved': true});
-                        // Try to send SMS notification to the user (open SMS app with prefilled message)
-                        try {
-                          final data = d.data() as Map<String, dynamic>;
-                          final phone = (data['contact'] ?? '').toString();
-                          final name = (data['name'] ?? 'User').toString();
-                          if (phone.isNotEmpty) {
-                            final body = Uri.encodeComponent('Hello $name, your account/request has been approved on Blood Bridge.');
-                            final uri = Uri.parse('sms:$phone?body=$body');
-                            await launchUrl(uri);
-                          }
-                        } catch (e) {
-                          // ignore SMS send failures
-                        }
-                        _loadStats();
-                      },
-                      child: Text(approved ? 'Approved' : 'Approve'),
-                    ),
+                    trailing: isDonor
+                        ? ElevatedButton(
+                            onPressed: verified ? null : () async {
+                              await FirebaseFirestore.instance.collection('users').doc(d.id).update({
+                                'verified': true,
+                                'approved': true,
+                                'verificationStatus': 'approved',
+                                'verificationReviewedAt': FieldValue.serverTimestamp(),
+                                'verificationReviewedBy': FirebaseAuth.instance.currentUser?.email ?? 'super_admin',
+                              });
+                              try {
+                                final phone = (data['contact'] ?? '').toString();
+                                final name = (data['name'] ?? 'User').toString();
+                                if (phone.isNotEmpty) {
+                                  final body = Uri.encodeComponent('Hello $name, your donor verification has been approved on Blood Bridge.');
+                                  final uri = Uri.parse('sms:$phone?body=$body');
+                                  await launchUrl(uri);
+                                }
+                              } catch (_) {}
+                              setState(() {});
+                              _loadStats();
+                            },
+                            child: Text(verified ? 'Verified' : 'Verify Donor'),
+                          )
+                        : ElevatedButton(
+                            onPressed: approved ? null : () async {
+                              await FirebaseFirestore.instance.collection('users').doc(d.id).update({'approved': true});
+                              try {
+                                final phone = (data['contact'] ?? '').toString();
+                                final name = (data['name'] ?? 'User').toString();
+                                if (phone.isNotEmpty) {
+                                  final body = Uri.encodeComponent('Hello $name, your account/request has been approved on Blood Bridge.');
+                                  final uri = Uri.parse('sms:$phone?body=$body');
+                                  await launchUrl(uri);
+                                }
+                              } catch (_) {}
+                              _loadStats();
+                            },
+                            child: Text(approved ? 'Approved' : 'Approve'),
+                          ),
                   );
             },
           );
@@ -2766,6 +3326,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final Map<String, dynamic> u = jsonDecode(list[i]);
               final isDonor = (u['role'] ?? '') == 'donor';
               final approved = u['approved'] == true;
+              final verificationStatus = (u['verificationStatus'] ?? '').toString().toLowerCase();
+              final verified = u['verified'] == true || verificationStatus == 'approved';
                   return ListTile(
                     leading: CircleAvatar(child: Text((i+1).toString())),
                     title: Text(u['name'] ?? 'No name'),
@@ -2774,12 +3336,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       Navigator.of(context).push(MaterialPageRoute(builder: (_) => UserProfileScreen(demoData: u)));
                     },
                     trailing: isDonor ? ElevatedButton(
-                      onPressed: approved ? null : () async {
-                        // toggle approved in prefs
+                      onPressed: verified ? null : () async {
                         final prefs = await SharedPreferences.getInstance();
                         final list2 = prefs.getStringList('demo_users') ?? <String>[];
                         final Map<String, dynamic> uu = jsonDecode(list2[i]);
                         uu['approved'] = true;
+                        uu['verified'] = true;
+                        uu['verificationStatus'] = 'approved';
+                        uu['verificationReviewedAt'] = DateTime.now().toIso8601String();
+                        uu['verificationReviewedBy'] = prefs.getString('demo_current_email') ?? 'super_admin';
                         list2[i] = jsonEncode(uu);
                         await prefs.setStringList('demo_users', list2);
                           // Simulate SMS for demo: save to sent_sms list and show snackbar
@@ -2788,7 +3353,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             final name = (uu['name'] ?? 'User').toString();
                             if (phone.isNotEmpty) {
                               final msgs = prefs.getStringList('sent_sms') ?? <String>[];
-                              final msg = {'to': phone, 'body': 'Hello $name, your account/request has been approved on Blood Bridge.', 'at': DateTime.now().toIso8601String()};
+                              final msg = {'to': phone, 'body': 'Hello $name, your donor verification has been approved on Blood Bridge.', 'at': DateTime.now().toIso8601String()};
                               msgs.add(jsonEncode(msg));
                               await prefs.setStringList('sent_sms', msgs);
                               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Simulated SMS saved for $phone')));
@@ -2796,7 +3361,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           } catch (_) {}
                         setState(() {});
                       },
-                      child: Text(approved ? 'Approved' : 'Approve'),
+                      child: Text(verified ? 'Verified' : 'Verify Donor'),
                     ) : null,
                   );
             } catch (e) {
@@ -2812,21 +3377,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Container(
       margin: EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [color.withOpacity(0.08), color.withOpacity(0.02)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: color.withOpacity(0.3),
-          width: 2,
+          color: color.withOpacity(0.22),
+          width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.15),
-            blurRadius: 8,
-            offset: Offset(0, 4),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: Offset(0, 3),
           ),
         ],
       ),
@@ -2838,21 +3399,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
             Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [color, color.withOpacity(0.7)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                color: color.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: color.withOpacity(0.4),
-                    blurRadius: 8,
-                    offset: Offset(0, 3),
-                  ),
-                ],
               ),
-              child: Icon(icon, color: Colors.white, size: 24),
+              child: Icon(icon, color: color, size: 24),
             ),
             SizedBox(width: 16),
             Expanded(
@@ -3023,6 +3573,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final nameCtl = TextEditingController();
     final emailCtl = TextEditingController();
     final phoneCtl = TextEditingController();
+    final cnicCtl = TextEditingController();
     final passwordCtl = TextEditingController();
     final locationCtl = TextEditingController();
     String selectedRole = 'donor';
@@ -3093,6 +3644,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   SizedBox(height: 12),
                   TextField(
+                    controller: cnicCtl,
+                    decoration: InputDecoration(
+                      labelText: 'CNIC *',
+                      prefixIcon: Icon(Icons.badge),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  SizedBox(height: 12),
+                  TextField(
                     controller: locationCtl,
                     decoration: InputDecoration(
                       labelText: 'Location',
@@ -3138,9 +3699,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
               child: Text('Cancel'),
             ),
-            OutlinedButton.icon(
-              icon: Icon(Icons.add),
-              label: Text('Add User'),
+            OutlinedButton(
+              child: Text('Add User'),
               style: OutlinedButton.styleFrom(
                 backgroundColor: Colors.transparent,
                 foregroundColor: Colors.black,
@@ -3153,11 +3713,24 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Please fill all required fields'), backgroundColor: Colors.red));
                   return;
                 }
+                if (cnicCtl.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Please enter CNIC'), backgroundColor: Colors.red),
+                  );
+                  return;
+                }
+                if (!RegExp(r'^\d{5}-\d{7}-\d$|^\d{13}$').hasMatch(cnicCtl.text.trim())) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('CNIC must be in 12345-1234567-1 or 13-digit format'), backgroundColor: Colors.red),
+                  );
+                  return;
+                }
                 final newUser = {
                   'name': nameCtl.text.trim(),
                   'email': emailCtl.text.trim(),
                   'password': passwordCtl.text.trim(),
                   'phone': phoneCtl.text.trim(),
+                  'cnic': cnicCtl.text.trim(),
                   'location': locationCtl.text.trim(),
                   'role': selectedRole,
                   'bloodGroup': selectedBloodGroup,
@@ -3242,7 +3815,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget _userListTile(Map<String, dynamic> data, String id, {required bool isFirebase}) {
     final role = data['role'] ?? 'user';
     final verified = data['verified'] ?? false;
-    Color roleColor = role == 'donor' ? Colors.red : role == 'recipient' ? Colors.green : Colors.blue;
+    Color roleColor = role == 'donor' ? Colors.grey : role == 'recipient' ? Colors.grey : Colors.blue;
     
     return ListTile(
       leading: Stack(
@@ -3313,6 +3886,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final nameCtl = TextEditingController(text: data['name'] ?? '');
     final emailCtl = TextEditingController(text: data['email'] ?? '');
     final phoneCtl = TextEditingController(text: data['phone'] ?? '');
+    final cnicCtl = TextEditingController(text: data['cnic'] ?? '');
     String selectedRole = data['role'] ?? 'donor';
     String selectedBloodGroup = data['bloodGroup'] ?? 'A+';
     bool verified = data['verified'] ?? false;
@@ -3367,6 +3941,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       prefixIcon: Icon(Icons.phone),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     ),
+                  ),
+                  SizedBox(height: 12),
+                  TextField(
+                    controller: cnicCtl,
+                    decoration: InputDecoration(
+                      labelText: 'CNIC',
+                      prefixIcon: Icon(Icons.badge),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    keyboardType: TextInputType.number,
                   ),
                   SizedBox(height: 12),
                   DropdownButtonFormField<String>(
@@ -3429,6 +4013,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   'name': nameCtl.text.trim(),
                   'email': emailCtl.text.trim(),
                   'phone': phoneCtl.text.trim(),
+                  'cnic': cnicCtl.text.trim(),
                   'role': selectedRole,
                   'bloodGroup': selectedBloodGroup,
                   'verified': verified,
@@ -3849,14 +4434,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         },
                         icon: Icon(Icons.send, size: 18),
                         label: Text('Send'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF7B1FA2),
-                          foregroundColor: Colors.white,
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: Colors.black,
+                          side: BorderSide(color: Colors.black, width: 2),
                           padding: EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          elevation: 2,
                         ),
                       ),
                     ],
@@ -3993,6 +4578,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF424242)),
                 ),
               ),
+              // Delete All Messages button (only for messages view)
+              if (_selectedCommunicationView == 'messages')
+                IconButton(
+                  icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
+                  tooltip: 'Delete All Messages',
+                  onPressed: () => _confirmDeleteAllMessages(),
+                ),
             ],
           ),
         ),
@@ -4104,8 +4696,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _buildMessagesTodayView() {
     if (!FirebaseService.initialized) {
-      // Demo mode - show sample messages
-      if (_messagesToday.isEmpty) {
+      // Demo mode - show sample messages (filter out deleted)
+      final activeMessages = _messagesToday.where((m) => m['deleted'] != true).toList();
+      
+      if (activeMessages.isEmpty) {
         return Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -4120,9 +4714,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
       return ListView.builder(
         padding: EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _messagesToday.length,
+        itemCount: activeMessages.length,
         itemBuilder: (context, i) {
-          final message = _messagesToday[i];
+          final message = activeMessages[i];
           final sentAt = message['sentAt'];
           final timeStr = sentAt != null 
               ? _formatTime(sentAt is Timestamp ? sentAt.toDate() : sentAt)
@@ -4164,6 +4758,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
         
         for (var doc in snapshot.data!.docs) {
           final data = doc.data() as Map<String, dynamic>;
+          
+          // Skip soft-deleted messages
+          if (data['deleted'] == true) continue;
+          
           final isAdminMessage = data['from'] == 'Admin';
           
           // Read userRole directly from message (stored when message was sent)
@@ -4249,13 +4847,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
               children: [
                 CircleAvatar(
                   backgroundColor: isAdminMessage ? Colors.purple[100] : 
-                                  userRole == 'donor' ? Colors.red[50] : Colors.blue[50],
+                                  userRole == 'donor' ? Colors.grey[300] : Colors.grey[300],
                   radius: 20,
                   child: Icon(
                     isAdminMessage ? Icons.admin_panel_settings : 
                     userRole == 'donor' ? Icons.bloodtype : Icons.person, 
                     color: isAdminMessage ? Colors.purple[700] : 
-                          userRole == 'donor' ? Colors.red[700] : Colors.blue[700], 
+                          userRole == 'donor' ? Colors.grey[700] : Colors.grey[700], 
                     size: 20,
                   ),
                 ),
@@ -4300,7 +4898,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: isAdminMessage ? Colors.purple[100] : 
-                           userRole == 'donor' ? Colors.red[50] : Colors.blue[50],
+                           userRole == 'donor' ? Colors.grey[300] : Colors.grey[300],
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -4308,7 +4906,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     style: TextStyle(
                       fontSize: 10, 
                       color: isAdminMessage ? Colors.purple[700] : 
-                             userRole == 'donor' ? Colors.red[700] : Colors.blue[700],
+                             userRole == 'donor' ? Colors.grey[700] : Colors.grey[700],
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -4333,23 +4931,82 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
             if (!isAdminMessage) ...[
               SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    _showResponseDialog(message['from'] ?? 'User');
-                  },
-                  icon: Icon(Icons.reply, size: 16),
-                  label: Text('Reply'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color(0xFF7B1FA2),
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      _showResponseDialog(message['from'] ?? 'User');
+                    },
+                    icon: Icon(Icons.reply, size: 16),
+                    label: Text('Reply'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.black,
+                      side: BorderSide(color: Colors.black, width: 2),
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
-                ),
+                  SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _confirmDeleteMessage(message);
+                    },
+                    icon: Icon(Icons.delete, size: 16),
+                    label: Text('Delete'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red[700],
+                      side: BorderSide(color: Colors.red[300]!),
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Admin can edit or delete any message
+            if (isAdminMessage) ...[
+              SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _showEditMessageDialog(message);
+                    },
+                    icon: Icon(Icons.edit, size: 16),
+                    label: Text('Edit'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blue[700],
+                      side: BorderSide(color: Colors.blue[300]!),
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _confirmDeleteMessage(message);
+                    },
+                    icon: Icon(Icons.delete, size: 16),
+                    label: Text('Delete'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red[700],
+                      side: BorderSide(color: Colors.red[300]!),
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ],
@@ -4421,14 +5078,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
             },
             icon: Icon(Icons.send, size: 18),
             label: Text('Send Reply'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFF7B1FA2),
-              foregroundColor: Colors.white,
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
               padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
-              elevation: 2,
             ),
           ),
         ],
@@ -5089,81 +5746,349 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _pendingVerificationsList() {
-    final pending = [
-      {'name': 'Bilal Ahmed', 'bloodGroup': 'A+', 'submitted': '2026-02-22', 'documents': 'ID + Medical'},
-      {'name': 'Ayesha Khan', 'bloodGroup': 'B-', 'submitted': '2026-02-21', 'documents': 'ID Only'},
-      {'name': 'Imran Shah', 'bloodGroup': 'O+', 'submitted': '2026-02-20', 'documents': 'ID + Medical'},
-    ];
-    
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
-      itemCount: pending.length,
-      itemBuilder: (context, i) {
-        final p = pending[i];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: Colors.orange[50],
-            child: Text(p['bloodGroup']!, style: TextStyle(color: Colors.orange[800], fontWeight: FontWeight.bold, fontSize: 12)),
-          ),
-          title: Text(p['name']!, style: TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('Submitted: ${p['submitted']} • ${p['documents']}'),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: Icon(Icons.check_circle, color: Colors.green),
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${p['name']} verified!'))),
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _loadPendingVerificationRequests(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: BloodBridgeLoader()),
+          );
+        }
+
+        final pending = snap.data ?? <Map<String, dynamic>>[];
+        if (pending.isEmpty) {
+          return Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(
+              child: Text(
+                'No pending verification documents',
+                style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w600),
               ),
-              IconButton(
-                icon: Icon(Icons.cancel, color: Colors.red),
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Verification rejected'))),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: NeverScrollableScrollPhysics(),
+          itemCount: pending.length,
+          itemBuilder: (context, i) {
+            final p = pending[i];
+            final bloodGroup = (p['bloodGroup'] ?? 'N/A').toString();
+            final submitted = _formatVerificationSubmittedAt(p['verificationDocumentUploadedAt']);
+            final cnic = (p['cnic'] ?? '').toString();
+            final docData = (p['verificationDocumentData'] ?? '').toString();
+            final displayName = (p['name'] ?? 'Unknown').toString();
+
+            return ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.orange[50],
+                child: Text(
+                  bloodGroup,
+                  style: TextStyle(color: Colors.orange[800], fontWeight: FontWeight.bold, fontSize: 12),
+                ),
               ),
-            ],
-          ),
+              title: Text(displayName, style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                'Submitted: $submitted${cnic.isNotEmpty ? ' • CNIC: $cnic' : ''}',
+              ),
+              trailing: SizedBox(
+                width: 138,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.visibility, color: Colors.blue),
+                      tooltip: 'View document',
+                      onPressed: () => _showVerificationDocumentPreview(displayName, docData),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.check_circle, color: Colors.green),
+                      tooltip: 'Approve donor',
+                      onPressed: () => _setVerificationStatus(p, approve: true),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.cancel, color: Colors.red),
+                      tooltip: 'Reject document',
+                      onPressed: () => _setVerificationStatus(p, approve: false),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
     );
   }
 
   Widget _verifiedDonorsList() {
-    final verified = [
-      {'name': 'Ahmad Khan', 'bloodGroup': 'A+', 'rating': 4.9, 'donations': 25},
-      {'name': 'Sara Ali', 'bloodGroup': 'O-', 'rating': 4.8, 'donations': 22},
-      {'name': 'Usman Ahmed', 'bloodGroup': 'B+', 'rating': 4.7, 'donations': 20},
-    ];
-    
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
-      itemCount: verified.length,
-      itemBuilder: (context, i) {
-        final v = verified[i];
-        return ListTile(
-          leading: Stack(
-            children: [
-              CircleAvatar(
-                backgroundColor: Colors.green[50],
-                child: Text(v['bloodGroup'] as String, style: TextStyle(color: Colors.green[800], fontWeight: FontWeight.bold, fontSize: 12)),
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _loadVerifiedDonors(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: BloodBridgeLoader()),
+          );
+        }
+
+        final verified = snap.data ?? <Map<String, dynamic>>[];
+        if (verified.isEmpty) {
+          return Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(
+              child: Text(
+                'No verified donors yet',
+                style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w600),
               ),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Icon(Icons.verified, color: Colors.blue, size: 14),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: NeverScrollableScrollPhysics(),
+          itemCount: verified.length,
+          itemBuilder: (context, i) {
+            final v = verified[i];
+            final bloodGroup = (v['bloodGroup'] ?? 'N/A').toString();
+            final donations = (v['donations'] ?? v['donationCount'] ?? 0).toString();
+            final rating = (v['rating'] ?? v['reputation'] ?? 4.5).toString();
+
+            return ListTile(
+              leading: Stack(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: Colors.green[50],
+                    child: Text(
+                      bloodGroup,
+                      style: TextStyle(color: Colors.green[800], fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Icon(Icons.verified, color: Colors.blue, size: 14),
+                  ),
+                ],
               ),
-            ],
-          ),
-          title: Text(v['name'] as String, style: TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('${v['donations']} donations'),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.star, color: Colors.amber, size: 18),
-              SizedBox(width: 4),
-              Text('${v['rating']}', style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
-          ),
+              title: Text((v['name'] ?? 'Unknown').toString(), style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text('$donations donations'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.star, color: Colors.amber, size: 18),
+                  SizedBox(width: 4),
+                  Text(rating, style: TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+            );
+          },
         );
+      },
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _loadPendingVerificationRequests() async {
+    if (FirebaseService.initialized) {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('role', isEqualTo: 'donor')
+          .get();
+
+      final pending = <Map<String, dynamic>>[];
+      for (final d in snap.docs) {
+        final data = d.data();
+        final documentData = (data['verificationDocumentData'] ?? '').toString();
+        final status = (data['verificationStatus'] ?? '').toString().toLowerCase();
+        final verified = data['verified'] == true || status == 'approved';
+        if (documentData.isNotEmpty && !verified) {
+          pending.add({
+            ...data,
+            '_docId': d.id,
+          });
+        }
+      }
+
+      pending.sort((a, b) {
+        final aDate = _toDateTime(a['verificationDocumentUploadedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bDate = _toDateTime(b['verificationDocumentUploadedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bDate.compareTo(aDate);
+      });
+
+      return pending;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('demo_users') ?? <String>[];
+    final pending = <Map<String, dynamic>>[];
+
+    for (final s in list) {
+      try {
+        final Map<String, dynamic> u = jsonDecode(s);
+        if ((u['role'] ?? '').toString() != 'donor') continue;
+        final documentData = (u['verificationDocumentData'] ?? '').toString();
+        final status = (u['verificationStatus'] ?? '').toString().toLowerCase();
+        final verified = u['verified'] == true || status == 'approved';
+        if (documentData.isNotEmpty && !verified) {
+          pending.add(u);
+        }
+      } catch (_) {}
+    }
+
+    pending.sort((a, b) {
+      final aDate = _toDateTime(a['verificationDocumentUploadedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate = _toDateTime(b['verificationDocumentUploadedAt']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bDate.compareTo(aDate);
+    });
+
+    return pending;
+  }
+
+  Future<List<Map<String, dynamic>>> _loadVerifiedDonors() async {
+    if (FirebaseService.initialized) {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('role', isEqualTo: 'donor')
+          .get();
+      final verified = <Map<String, dynamic>>[];
+      for (final d in snap.docs) {
+        final data = d.data();
+        final status = (data['verificationStatus'] ?? '').toString().toLowerCase();
+        final isVerified = data['verified'] == true || status == 'approved';
+        if (isVerified) {
+          verified.add(data);
+        }
+      }
+      return verified;
+    }
+
+    final donors = await _getAllDemoDonors();
+    return donors.where((d) {
+      final status = (d['verificationStatus'] ?? '').toString().toLowerCase();
+      return d['verified'] == true || status == 'approved';
+    }).toList();
+  }
+
+  DateTime? _toDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    return null;
+  }
+
+  String _formatVerificationSubmittedAt(dynamic value) {
+    final dt = _toDateTime(value);
+    if (dt == null) return 'Unknown date';
+    return _formatDate(dt);
+  }
+
+  Future<void> _setVerificationStatus(Map<String, dynamic> donor, {required bool approve}) async {
+    final status = approve ? 'approved' : 'rejected';
+    try {
+      if (FirebaseService.initialized) {
+        final docId = (donor['_docId'] ?? '').toString();
+        if (docId.isEmpty) throw Exception('Missing donor id');
+
+        await FirebaseFirestore.instance.collection('users').doc(docId).set({
+          'verificationStatus': status,
+          'verificationReviewedAt': FieldValue.serverTimestamp(),
+          'verificationReviewedBy': FirebaseAuth.instance.currentUser?.email ?? 'super_admin',
+          'verified': approve,
+          'approved': approve,
+        }, SetOptions(merge: true));
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final targetEmail = (donor['email'] ?? '').toString();
+        final updated = <String>[];
+
+        for (final s in users) {
+          try {
+            final Map<String, dynamic> u = jsonDecode(s);
+            if ((u['email'] ?? '').toString() == targetEmail) {
+              u['verificationStatus'] = status;
+              u['verificationReviewedAt'] = DateTime.now().toIso8601String();
+              u['verified'] = approve;
+              u['approved'] = approve;
+              updated.add(jsonEncode(u));
+            } else {
+              updated.add(s);
+            }
+          } catch (_) {
+            updated.add(s);
+          }
+        }
+
+        await prefs.setStringList('demo_users', updated);
+      }
+
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(approve ? 'Donor verified successfully' : 'Verification rejected')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Verification update failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showVerificationDocumentPreview(String donorName, String documentData) {
+    if (documentData.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No document uploaded for $donorName')),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) {
+        try {
+          final bytes = base64Decode(documentData);
+          return AlertDialog(
+            backgroundColor: Colors.white.withOpacity(0.92),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.black, width: 2),
+            ),
+            title: Text('$donorName - Document'),
+            content: SizedBox(
+              width: 420,
+              child: InteractiveViewer(
+                child: Image.memory(bytes, fit: BoxFit.contain),
+              ),
+            ),
+            actions: [
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  foregroundColor: Colors.black,
+                  side: BorderSide(color: Colors.black, width: 2),
+                ),
+                child: Text('Close'),
+              ),
+            ],
+          );
+        } catch (_) {
+          return AlertDialog(
+            title: Text('Preview unavailable'),
+            content: Text('Could not decode uploaded document.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(context).pop(), child: Text('OK')),
+            ],
+          );
+        }
       },
     );
   }
@@ -5888,9 +6813,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         },
                         icon: Icon(Icons.search),
                         label: Text('Find Matches'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFFD32F2F),
-                          foregroundColor: Colors.white,
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: Colors.black,
+                          side: BorderSide(color: Colors.black, width: 2),
                           padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                         ),
                       ),
@@ -6103,9 +7029,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFFD32F2F),
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.black,
+                        side: BorderSide(color: Colors.black, width: 2),
                         padding: EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
@@ -6202,9 +7130,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFFD32F2F),
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.black,
+                        side: BorderSide(color: Colors.black, width: 2),
                         padding: EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
@@ -6317,9 +7247,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFFD32F2F),
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.black,
+                        side: BorderSide(color: Colors.black, width: 2),
                         padding: EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),

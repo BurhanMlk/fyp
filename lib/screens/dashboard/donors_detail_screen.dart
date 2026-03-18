@@ -122,7 +122,7 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xFFF5F0FF),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text('All Donors'),
         backgroundColor: Colors.red,
@@ -549,13 +549,13 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
             // Avatar Circle
             CircleAvatar(
               radius: 30,
-              backgroundColor: Color(0xFFE3E8FF),
+              backgroundColor: Colors.grey.shade200,
               backgroundImage: photoData != null ? MemoryImage(base64Decode(photoData)) : null,
               child: photoData == null 
                 ? Text(
                     getInitials(name),
                     style: TextStyle(
-                      color: Color(0xFF5C6BC0),
+                      color: Colors.grey.shade700,
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                     ),
@@ -636,13 +636,14 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Color(0xFFFFE4E9),
+                    color: Colors.white.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.grey.shade400, width: 1.5),
                   ),
                   child: Text(
                     'Donor',
                     style: TextStyle(
-                      color: Color(0xFFE91E63),
+                      color: Colors.grey.shade700,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -650,24 +651,24 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
                 ),
                 SizedBox(height: 8),
                 // Contact Button
-                ElevatedButton(
+                OutlinedButton(
                   onPressed: () {
                     _showDonorDetails(donor);
                   },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color(0xFFFF7043),
-                    foregroundColor: Colors.white,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.black,
+                    side: BorderSide(color: Colors.black, width: 2),
                     padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(25),
                     ),
-                    elevation: 2,
                   ),
                   child: Text(
                     'Contact',
                     style: TextStyle(
                       fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),

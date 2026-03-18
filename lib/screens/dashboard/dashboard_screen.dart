@@ -12,6 +12,7 @@ import 'all_users_screen.dart';
 import 'pending_requests_screen.dart';
 import 'donors_detail_screen.dart';
 import 'recipients_detail_screen.dart';
+import 'package:image_picker/image_picker.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -28,6 +29,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _totalRecipients = 0;
   int _pendingRequests = 0;
   bool _isLoading = true;
+  final ImagePicker _picker = ImagePicker();
+  bool _hasUploadedDocument = false;
+  String _verificationStatus = 'not_uploaded';
 
   @override
   void initState() {
@@ -54,8 +58,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _userEmail = user.email ?? '';
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
         if (userDoc.exists) {
-          _userName = userDoc.data()?['name'] ?? 'User';
-          _userRole = userDoc.data()?['role'] ?? 'user';
+          final data = userDoc.data() ?? <String, dynamic>{};
+          _userName = data['name'] ?? 'User';
+          _userRole = data['role'] ?? 'user';
+          _hasUploadedDocument = (data['verificationDocumentData'] ?? '').toString().isNotEmpty;
+          final status = (data['verificationStatus'] ?? '').toString();
+          _verificationStatus = status.isEmpty
+              ? (_hasUploadedDocument ? 'pending' : 'not_uploaded')
+              : status;
         }
       }
 
@@ -87,6 +97,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final currentEmail = prefs.getString('demo_current_email');
       _userEmail = currentEmail ?? '';
       final users = prefs.getStringList('demo_users') ?? <String>[];
+
+      _totalDonors = 0;
+      _totalRecipients = 0;
+      _pendingRequests = 0;
       
       for (final userStr in users) {
         try {
@@ -94,6 +108,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (user['email'] == currentEmail) {
             _userName = user['name'] ?? 'User';
             _userRole = user['role'] ?? 'user';
+            _hasUploadedDocument = (user['verificationDocumentData'] ?? '').toString().isNotEmpty;
+            final status = (user['verificationStatus'] ?? '').toString();
+            _verificationStatus = status.isEmpty
+                ? (_hasUploadedDocument ? 'pending' : 'not_uploaded')
+                : status;
           }
           
           if (user['role'] == 'donor') _totalDonors++;
@@ -151,14 +170,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 padding: EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [Color(0xFFFF6B9D), Color(0xFFFF8FAB)],
+                    colors: [Color(0xFFD84343), Color(0xFFEF5350)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: Color(0xFFFF6B9D).withOpacity(0.3),
+                      color: Color(0xFFD84343).withOpacity(0.2),
                       blurRadius: 12,
                       offset: Offset(0, 4),
                     ),
@@ -196,7 +215,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [Color(0xFF00BCD4), Color(0xFF00ACC1)],
+                          colors: _userRole == 'donor' 
+                              ? [Color(0xFFBDBDBD), Color(0xFF9E9E9E)] // Light grey for donors
+                              : _userRole == 'recipient'
+                                  ? [Color(0xFFBDBDBD), Color(0xFF9E9E9E)] // Light grey for recipients
+                                  : [Color(0xFFBDBDBD), Color(0xFF9E9E9E)], // Light grey for others
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -328,7 +351,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (_userRole == 'donor') SizedBox(height: 12),
               
               // Verification Status
-              if (_userRole == 'donor')
+              if (_userRole == 'recipient')
                 _buildQuickActionCard(
                   'Verification Status',
                   'Check your verification and reputation',
@@ -336,7 +359,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Colors.blue.shade600,
                   onTap: () => _showVerificationDialog(),
                 ),
-              if (_userRole == 'donor') SizedBox(height: 12),
+              if (_userRole == 'recipient') SizedBox(height: 12),
               
               // Nearby Blood Banks
               _buildQuickActionCard(
@@ -493,12 +516,154 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _loadDonationHistory() async {
-    // Demo data for now
-    return [
-      {'location': 'City Hospital', 'date': '2026-02-15', 'bloodGroup': 'A+'},
-      {'location': 'Red Crescent', 'date': '2025-11-20', 'bloodGroup': 'A+'},
-      {'location': 'Blood Bank Center', 'date': '2025-08-10', 'bloodGroup': 'A+'},
+    if (_userRole != 'donor') return [];
+
+    if (FirebaseService.initialized) {
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('donor_requests')
+            .get();
+
+        final donations = <Map<String, dynamic>>[];
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          if (!_isApprovedDonation(data) || !_belongsToCurrentDonor(data)) continue;
+
+          final donatedAt = _donationRequestTime(data);
+          final sharedData = data['sharedData'] is Map
+              ? Map<String, dynamic>.from(data['sharedData'] as Map)
+              : <String, dynamic>{};
+
+          donations.add({
+            'id': doc.id,
+            'location': _donationRequestLocation(data),
+            'date': _formatDateOnly(donatedAt),
+            'bloodGroup': (data['bloodGroup'] ?? sharedData['bloodGroup'] ?? 'N/A').toString(),
+            'timestamp': donatedAt,
+          });
+        }
+
+        donations.sort((a, b) => (b['timestamp'] as DateTime).compareTo(a['timestamp'] as DateTime));
+        return donations;
+      } catch (e) {
+        print('Error loading donation history: $e');
+        return [];
+      }
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final requests = prefs.getStringList('donor_requests') ?? <String>[];
+      final donations = <Map<String, dynamic>>[];
+
+      for (final reqStr in requests) {
+        try {
+          final data = jsonDecode(reqStr) as Map<String, dynamic>;
+          if (!_isApprovedDonation(data) || !_belongsToCurrentDonor(data)) continue;
+
+          final donatedAt = _donationRequestTime(data);
+          final sharedData = data['sharedData'] is Map
+              ? Map<String, dynamic>.from(data['sharedData'] as Map)
+              : <String, dynamic>{};
+
+          donations.add({
+            'id': (data['id'] ?? '').toString(),
+            'location': _donationRequestLocation(data),
+            'date': _formatDateOnly(donatedAt),
+            'bloodGroup': (data['bloodGroup'] ?? sharedData['bloodGroup'] ?? 'N/A').toString(),
+            'timestamp': donatedAt,
+          });
+        } catch (_) {}
+      }
+
+      donations.sort((a, b) => (b['timestamp'] as DateTime).compareTo(a['timestamp'] as DateTime));
+      return donations;
+    } catch (e) {
+      print('Error loading demo donation history: $e');
+      return [];
+    }
+  }
+
+  bool _isApprovedDonation(Map<String, dynamic> request) {
+    final status = (request['status'] ?? '').toString().trim().toLowerCase();
+    return status == 'approved' || status == 'completed' || status == 'handled';
+  }
+
+  bool _belongsToCurrentDonor(Map<String, dynamic> request) {
+    final normalizedEmail = _userEmail.trim().toLowerCase();
+    final normalizedName = _userName.trim().toLowerCase();
+    final sharedData = request['sharedData'] is Map
+        ? Map<String, dynamic>.from(request['sharedData'] as Map)
+        : <String, dynamic>{};
+
+    final emails = <String>{
+      (request['donorEmail'] ?? '').toString().trim().toLowerCase(),
+      (request['email'] ?? '').toString().trim().toLowerCase(),
+      (request['userEmail'] ?? '').toString().trim().toLowerCase(),
+      (request['from'] ?? '').toString().trim().toLowerCase(),
+      (request['requestedBy'] ?? '').toString().trim().toLowerCase(),
+      (sharedData['donorEmail'] ?? '').toString().trim().toLowerCase(),
+      (sharedData['email'] ?? '').toString().trim().toLowerCase(),
+      (sharedData['userEmail'] ?? '').toString().trim().toLowerCase(),
+    }..removeWhere((value) => value.isEmpty);
+
+    if (normalizedEmail.isNotEmpty && emails.contains(normalizedEmail)) {
+      return true;
+    }
+
+    final names = <String>{
+      (request['donorName'] ?? '').toString().trim().toLowerCase(),
+      (request['name'] ?? '').toString().trim().toLowerCase(),
+      (sharedData['donorName'] ?? '').toString().trim().toLowerCase(),
+      (sharedData['name'] ?? '').toString().trim().toLowerCase(),
+    }..removeWhere((value) => value.isEmpty);
+
+    return normalizedName.isNotEmpty && names.contains(normalizedName);
+  }
+
+  DateTime _donationRequestTime(Map<String, dynamic> request) {
+    final sharedData = request['sharedData'] is Map
+        ? Map<String, dynamic>.from(request['sharedData'] as Map)
+        : <String, dynamic>{};
+
+    final dynamic rawTime = request['handledAt'] ??
+        request['requestedAt'] ??
+        request['createdAt'] ??
+        sharedData['handledAt'] ??
+        sharedData['requestedAt'] ??
+        sharedData['createdAt'];
+
+    if (rawTime is Timestamp) return rawTime.toDate();
+    if (rawTime is DateTime) return rawTime;
+    if (rawTime is String) return DateTime.tryParse(rawTime) ?? DateTime.now();
+    return DateTime.now();
+  }
+
+  String _donationRequestLocation(Map<String, dynamic> request) {
+    final sharedData = request['sharedData'] is Map
+        ? Map<String, dynamic>.from(request['sharedData'] as Map)
+        : <String, dynamic>{};
+
+    final candidates = [
+      request['hospital'],
+      request['hospitalName'],
+      request['location'],
+      sharedData['hospital'],
+      sharedData['hospitalName'],
+      sharedData['location'],
     ];
+
+    for (final candidate in candidates) {
+      final value = (candidate ?? '').toString().trim();
+      if (value.isNotEmpty) return value;
+    }
+    return 'Blood Donation';
+  }
+
+  String _formatDateOnly(DateTime dateTime) {
+    final month = dateTime.month.toString().padLeft(2, '0');
+    final day = dateTime.day.toString().padLeft(2, '0');
+    return '${dateTime.year}-$month-$day';
   }
 
   Future<List<Map<String, dynamic>>> _loadReceivedHistory() async {
@@ -515,11 +680,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _showMessagesDialog() {
     final messageCtl = TextEditingController();
     final conversationId = _getConversationId(_userEmail);
-    
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.black, width: 1.5),
+          ),
           title: Row(
             children: [
               Icon(Icons.chat, color: Colors.indigo),
@@ -547,12 +717,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                       if (FirebaseService.initialized) {
                         if (snapshot.hasData) {
-                          // All messages in this conversation
                           for (var doc in snapshot.data!.docs) {
                             final data = doc.data() as Map<String, dynamic>;
                             final from = data['from'] ?? '';
                             final isMe = from == _userEmail;
-                            
+
                             allMessages.add({
                               'id': doc.id,
                               'sender': isMe ? 'You' : 'Admin',
@@ -561,8 +730,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               'isMe': isMe,
                               'read': data['read'] ?? false,
                             });
-                            
-                            // Mark admin messages as read when viewing
+
                             if (!isMe && data['read'] == false) {
                               FirebaseFirestore.instance
                                   .collection('messages')
@@ -572,7 +740,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           }
                         }
                       } else {
-                        // Demo mode - show sample messages
                         allMessages = [
                           {'sender': 'Admin', 'message': 'Welcome to Blood Bridge! How can we help?', 'time': null, 'isMe': false},
                         ];
@@ -603,7 +770,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             final time = (msg['time'] as Timestamp).toDate();
                             final now = DateTime.now();
                             final diff = now.difference(time);
-                            
+
                             if (diff.inMinutes < 60) {
                               timeStr = '${diff.inMinutes}m ago';
                             } else if (diff.inHours < 24) {
@@ -612,7 +779,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               timeStr = '${diff.inDays}d ago';
                             }
                           }
-                          
+
                           return _chatBubble(
                             msg['sender'] ?? '',
                             msg['message'] ?? '',
@@ -633,22 +800,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         controller: messageCtl,
                         decoration: InputDecoration(
                           hintText: 'Type a message to admin...',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(color: Color(0xFFB7C8A4), width: 1.5),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(color: Color(0xFFB7C8A4), width: 1.5),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(color: Color(0xFF9FB38A), width: 2),
+                          ),
                           contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         ),
                       ),
                     ),
                     SizedBox(width: 8),
-                    IconButton(
-                      icon: Icon(Icons.send, color: Colors.indigo),
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        side: BorderSide(color: Colors.black, width: 2),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                      ),
+                      child: Icon(Icons.send, color: Colors.white),
                       onPressed: () async {
                         final message = messageCtl.text.trim();
                         if (message.isNotEmpty) {
                           if (FirebaseService.initialized) {
                             try {
                               final now = Timestamp.now();
-                              
-                              // Add message
+
                               await FirebaseFirestore.instance.collection('messages').add({
                                 'conversationId': conversationId,
                                 'from': _userEmail,
@@ -657,10 +841,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'sentAt': now,
                                 'type': 'user_to_admin',
                                 'read': false,
-                                'userRole': _userRole, // Store user role
+                                'userRole': _userRole,
                               });
-                              
-                              // Create/update chat conversation
+
                               await FirebaseFirestore.instance
                                   .collection('chats')
                                   .doc(conversationId)
@@ -675,7 +858,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'unreadCount': FieldValue.increment(1),
                                 'updatedAt': now,
                               }, SetOptions(merge: true));
-                              
+
                               messageCtl.clear();
                             } catch (e) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -697,7 +880,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: Text('Close')),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.black,
+                side: BorderSide(color: Colors.black, width: 2),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text('Close', style: TextStyle(color: Colors.white)),
+            ),
           ],
         ),
       ),
@@ -713,6 +905,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         constraints: BoxConstraints(maxWidth: 280),
         decoration: BoxDecoration(
           color: isMe ? Colors.indigo[100] : Colors.grey[100],
+          border: Border.all(color: Color(0xFFB7C8A4), width: 1.4),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
@@ -750,6 +943,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 1.8),
+        ),
         title: Row(
           children: [
             Icon(Icons.emoji_events, color: Colors.amber[700]),
@@ -758,60 +956,132 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         content: SizedBox(
-          width: 400,
-          height: 400,
-          child: Column(
-            children: [
-              // Points Summary
-              Container(
-                padding: EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [Colors.amber[600]!, Colors.amber[400]!]),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.stars, color: Colors.white, size: 32),
-                    SizedBox(width: 12),
-                    Text('150 Points', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-              SizedBox(height: 16),
-              Text('Your Badges', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              SizedBox(height: 12),
-              Expanded(
-                child: GridView.count(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                  children: [
-                    _badgeItem(Icons.favorite, 'First Donation', Colors.red, true),
-                    _badgeItem(Icons.star, '5 Donations', Colors.amber, false),
-                    _badgeItem(Icons.verified, 'Verified', Colors.blue, true),
-                    _badgeItem(Icons.emergency, 'Emergency Hero', Colors.orange, false),
-                    _badgeItem(Icons.groups, 'Community', Colors.green, false),
-                    _badgeItem(Icons.health_and_safety, 'Life Saver', Colors.purple, false),
-                  ],
-                ),
-              ),
-            ],
+          width: 420,
+          height: 440,
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _loadDonationHistory(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Center(child: CircularProgressIndicator());
+              }
+
+              final donations = snapshot.data ?? [];
+              final donationCount = donations.length;
+              final firstDonationEarned = donationCount >= 1;
+              final fiveDonationsEarned = donationCount >= 5;
+              final verifiedEarned = _verificationStatus == 'approved';
+              final points = (donationCount * 100) + (verifiedEarned ? 50 : 0);
+
+              return Column(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black, width: 1.6),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.stars, color: Colors.amber[700], size: 30),
+                        SizedBox(width: 10),
+                        Text(
+                          '$points Points',
+                          style: TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Your Badges', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          if (!firstDonationEarned) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Complete your first donation to unlock certificate.'),
+                                backgroundColor: Colors.black87,
+                              ),
+                            );
+                            return;
+                          }
+                          _showCertificateDialog(donationCount: donationCount);
+                        },
+                        icon: Icon(Icons.workspace_premium, size: 18),
+                        label: Text('Certificate'),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                          side: BorderSide(color: Colors.black, width: 1.6),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 10),
+                  Expanded(
+                    child: GridView.count(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                      children: [
+                        _badgeItem(
+                          Icons.favorite,
+                          'First Donation',
+                          Colors.red,
+                          firstDonationEarned,
+                          onTap: firstDonationEarned
+                              ? () => _showCertificateDialog(donationCount: donationCount)
+                              : null,
+                        ),
+                        _badgeItem(Icons.star, '5 Donations', Colors.amber, fiveDonationsEarned),
+                        _badgeItem(Icons.verified, 'Verified', Colors.blue, verifiedEarned),
+                        _badgeItem(Icons.emergency, 'Emergency Hero', Colors.orange, false),
+                        _badgeItem(Icons.groups, 'Community', Colors.green, false),
+                        _badgeItem(Icons.health_and_safety, 'Life Saver', Colors.purple, false),
+                      ],
+                    ),
+                  ),
+                  if (firstDonationEarned)
+                    Text(
+                      'Tap First Donation badge to open your certificate',
+                      style: TextStyle(fontSize: 11, color: Colors.black54),
+                    ),
+                ],
+              );
+            },
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Close')),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              side: BorderSide(color: Colors.black, width: 2),
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text('Close', style: TextStyle(color: Colors.black)),
+          ),
         ],
       ),
     );
   }
 
-  Widget _badgeItem(IconData icon, String label, Color color, bool earned) {
-    return Container(
+  Widget _badgeItem(IconData icon, String label, Color color, bool earned, {VoidCallback? onTap}) {
+    final badge = Container(
       decoration: BoxDecoration(
-        color: earned ? color.withOpacity(0.1) : Colors.grey[100],
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: earned ? color : Colors.grey[300]!),
+        border: Border.all(
+          color: earned ? color : Colors.black.withOpacity(0.16),
+          width: earned ? 1.4 : 1,
+        ),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -820,7 +1090,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           SizedBox(height: 4),
           Text(
             label,
-            style: TextStyle(fontSize: 9, color: earned ? color : Colors.grey[400], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 9, color: earned ? color : Colors.grey[500], fontWeight: FontWeight.w600),
             textAlign: TextAlign.center,
           ),
           if (!earned)
@@ -828,12 +1098,213 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
     );
+
+    if (onTap == null) return badge;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: badge,
+      ),
+    );
   }
 
-  void _showVerificationDialog() {
+  Color _certificateAccentColor() {
+    const palette = [
+      Color(0xFF1565C0),
+      Color(0xFF2E7D32),
+      Color(0xFF6A1B9A),
+      Color(0xFFEF6C00),
+      Color(0xFF00838F),
+    ];
+
+    final seed = _userName.trim().toLowerCase();
+    if (seed.isEmpty) return palette.first;
+    return palette[seed.hashCode.abs() % palette.length];
+  }
+
+  String _certificateInitials() {
+    final parts = _userName
+        .trim()
+        .split(RegExp(r'\\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return 'D';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+  }
+
+  void _showCertificateDialog({required int donationCount}) {
+    final accentColor = _certificateAccentColor();
+    final donorName = _userName.trim().isEmpty ? 'Valued Donor' : _userName.trim();
+    final issuedOn = _formatDateOnly(DateTime.now());
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 1.8),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.workspace_premium, color: accentColor),
+            SizedBox(width: 8),
+            Text('Donation Certificate'),
+          ],
+        ),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.black, width: 1.5),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Certificate of Appreciation',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          Container(
+                            padding: EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: accentColor.withOpacity(0.14),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: accentColor, width: 1.5),
+                            ),
+                            child: Text(
+                              _certificateInitials(),
+                              style: TextStyle(color: accentColor, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 16),
+                      Text('This certifies that', style: TextStyle(color: Colors.black54)),
+                      SizedBox(height: 8),
+                      Text(
+                        donorName.toUpperCase(),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: accentColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 22,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        'has successfully completed $donationCount blood donation${donationCount == 1 ? '' : 's'} with Blood Bridge.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.black87),
+                      ),
+                      SizedBox(height: 10),
+                      Text('Issued on: $issuedOn', style: TextStyle(color: Colors.black54)),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 14),
+                Text('Download Options', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _certificateActionButton('Download PDF', Icons.picture_as_pdf),
+                    _certificateActionButton('Download PNG', Icons.image),
+                    _certificateActionButton('Download JPG', Icons.photo),
+                    _certificateActionButton('Download DOC', Icons.description),
+                    _certificateActionButton('Download TXT', Icons.text_snippet),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              side: BorderSide(color: Colors.black, width: 2),
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text('Close', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _certificateActionButton(String label, IconData icon) {
+    return OutlinedButton.icon(
+      onPressed: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$label started'),
+            backgroundColor: Colors.black87,
+          ),
+        );
+      },
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        side: BorderSide(color: Colors.black, width: 1.6),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  void _showVerificationDialog() {
+    final String roleLabel = _userRole == 'recipient' ? 'Recipient' : 'Donor';
+    final bool isVerified = _verificationStatus == 'approved';
+    final bool isPending = _verificationStatus == 'pending';
+    final bool isRejected = _verificationStatus == 'rejected';
+    final Color statusColor = isVerified
+      ? Colors.green
+      : isRejected
+        ? Colors.red
+        : Colors.orange;
+    final IconData statusIcon = isVerified
+      ? Icons.verified
+      : isRejected
+        ? Icons.cancel
+        : Icons.pending_actions;
+    final String statusTitle = isVerified
+      ? 'Verified $roleLabel'
+      : isRejected
+        ? 'Verification Rejected'
+        : _hasUploadedDocument
+          ? 'Verification Pending'
+          : 'Not Verified Yet';
+    final String statusSubtitle = isVerified
+      ? 'Your account is verified'
+      : isRejected
+        ? 'Please re-upload your document'
+        : _hasUploadedDocument
+          ? 'Your document is pending verification'
+          : 'No verification document uploaded';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: Row(
           children: [
             Icon(Icons.verified_user, color: Colors.blue),
@@ -843,26 +1314,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         content: SizedBox(
           width: 400,
-          height: 350,
+          height: 270,
           child: Column(
             children: [
               Container(
                 padding: EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.green[50],
+                  color: statusColor.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green),
+                  border: Border.all(color: statusColor),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.verified, color: Colors.green, size: 48),
+                    Icon(statusIcon, color: statusColor, size: 48),
                     SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Verified Donor', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green)),
-                          Text('Your account is verified', style: TextStyle(color: Colors.grey)),
+                          Text(statusTitle, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: statusColor)),
+                          Text(statusSubtitle, style: TextStyle(color: Colors.grey)),
                         ],
                       ),
                     ),
@@ -870,52 +1341,235 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               SizedBox(height: 20),
-              _verificationRow('ID Verification', true),
-              _verificationRow('Medical Certificate', true),
-              _verificationRow('Blood Test Report', false),
-              SizedBox(height: 16),
-              Text('Your Reputation', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ...List.generate(5, (i) => Icon(Icons.star, color: i < 4 ? Colors.amber : Colors.grey[300], size: 32)),
-                  SizedBox(width: 8),
-                  Text('4.5', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
-                ],
+              _verificationRow('ID Verification', isVerified),
+              _verificationRow('Medical Certificate', isVerified),
+              _verificationRow(
+                'Blood Test Report',
+                isVerified,
+                isPendingUpload: _hasUploadedDocument && isPending,
               ),
-              SizedBox(height: 8),
-              Text('Based on 12 reviews', style: TextStyle(color: Colors.grey, fontSize: 12)),
             ],
           ),
         ),
         actions: [
-          ElevatedButton.icon(
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload feature coming soon'))),
-            icon: Icon(Icons.upload_file),
-            label: Text('Upload Document'),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Close'),
           ),
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Close')),
+          SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: _uploadDocument,
+            icon: Icon(isVerified ? Icons.check_circle : Icons.upload_file),
+            label: Text(_hasUploadedDocument ? 'Re-upload Document' : 'Upload Document'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: isVerified
+                  ? Colors.green[50]
+                  : (_hasUploadedDocument ? Colors.orange[50] : Colors.transparent),
+              foregroundColor: isVerified
+                  ? Colors.green[700]
+                  : (_hasUploadedDocument ? Colors.orange[800] : Colors.black),
+              side: BorderSide(
+                color: isVerified
+                    ? Colors.green
+                    : (_hasUploadedDocument ? Colors.orange : Colors.black),
+                width: 2,
+              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _verificationRow(String label, bool verified) {
+  Future<void> _uploadDocument() async {
+    bool loadingShown = false;
+    try {
+      // Show dialog to choose between camera and gallery
+      final ImageSource? source = await showDialog<ImageSource>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: Colors.white.withOpacity(0.92),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.black, width: 2),
+          ),
+          title: Text('Choose Document Source'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                margin: EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.black, width: 1.5),
+                ),
+                child: ListTile(
+                  leading: Icon(Icons.camera_alt, color: Color(0xFFD32F2F)),
+                  title: Text('Camera'),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.black, width: 1.5),
+                ),
+                child: ListTile(
+                  leading: Icon(Icons.photo_library, color: Color(0xFFD32F2F)),
+                  title: Text('Gallery'),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      
+      if (source == null) return;
+      
+      final xfile = await _picker.pickImage(
+        source: source,
+        maxWidth: 900,
+        maxHeight: 900,
+        imageQuality: 60,
+      );
+      
+      if (xfile == null) return;
+      
+      // Show loading
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => Center(
+            child: Card(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Uploading document...'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        loadingShown = true;
+      }
+
+      final bytes = await xfile.readAsBytes();
+      final encodedDocument = base64Encode(bytes);
+
+      if (FirebaseService.initialized) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user == null) {
+          throw Exception('You must be logged in to upload documents.');
+        }
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'verificationDocumentData': encodedDocument,
+          'verificationDocumentUploadedAt': FieldValue.serverTimestamp(),
+          'verificationStatus': 'pending',
+          'verified': false,
+        }, SetOptions(merge: true));
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final currentEmail = prefs.getString('demo_current_email') ?? _userEmail;
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = <String>[];
+        for (final u in users) {
+          try {
+            final Map<String, dynamic> user = jsonDecode(u);
+            if ((user['email'] ?? '').toString() == currentEmail) {
+              user['verificationDocumentData'] = encodedDocument;
+              user['verificationDocumentUploadedAt'] = DateTime.now().toIso8601String();
+              user['verificationStatus'] = 'pending';
+              user['verified'] = false;
+              updated.add(jsonEncode(user));
+            } else {
+              updated.add(u);
+            }
+          } catch (_) {
+            updated.add(u);
+          }
+        }
+        await prefs.setStringList('demo_users', updated);
+      }
+      
+      setState(() {
+        _hasUploadedDocument = true;
+        _verificationStatus = 'pending';
+      });
+      
+      // Close loading dialog
+      if (mounted && loadingShown) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Document uploaded successfully!'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      // Close loading dialog if open
+      if (mounted && loadingShown) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload failed: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _verificationRow(String label, bool verified, {bool isPendingUpload = false}) {
+    final bool isPending = !verified && isPendingUpload;
+    final Color statusColor = verified
+        ? Colors.green
+        : (isPending ? Colors.orange : Colors.orange);
+    final String statusText = verified ? 'Verified' : (isPending ? 'Pending' : 'Pending');
+
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           Icon(
             verified ? Icons.check_circle : Icons.pending,
-            color: verified ? Colors.green : Colors.orange,
+            color: statusColor,
           ),
           SizedBox(width: 12),
           Text(label),
           Spacer(),
           Text(
-            verified ? 'Verified' : 'Pending',
-            style: TextStyle(color: verified ? Colors.green : Colors.orange, fontWeight: FontWeight.w600),
+            statusText,
+            style: TextStyle(color: statusColor, fontWeight: FontWeight.w600),
           ),
         ],
       ),
@@ -926,6 +1580,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: Row(
           children: [
             Icon(Icons.local_hospital, color: Colors.red[700]),
@@ -946,7 +1601,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Close')),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text('Close', style: TextStyle(color: Colors.white)),
+          ),
         ],
       ),
     );
@@ -971,12 +1635,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         trailing: Container(
           padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: hasStock ? Colors.green[50] : Colors.red[50],
+            color: hasStock ? Colors.green[600] : Colors.red[600],
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
             hasStock ? 'Available' : 'Low Stock',
-            style: TextStyle(color: hasStock ? Colors.green : Colors.red, fontSize: 11, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
           ),
         ),
         onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Opening $name...'))),
@@ -1055,7 +1719,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (icon == Icons.account_circle) {
       iconColor = Color(0xFF9575CD);
     } else if (icon == Icons.bloodtype) {
-      iconColor = Color(0xFFFF6B9D);
+      iconColor = Color(0xFFC62828);
     } else if (icon == Icons.person_search) {
       iconColor = Color(0xFF66BB6A);
     } else {
@@ -1070,6 +1734,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.black, width: 1.8),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.08),

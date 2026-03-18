@@ -334,153 +334,162 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          // static gradient background underneath the animated blood cells
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.transparent,
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
+        resizeToAvoidBottomInset: true,
+        body: Stack(
+          children: [
+            // static gradient background underneath the animated blood cells
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.transparent,
+                ),
               ),
             ),
-          ),
-          // animated blood cells on top so their colors/effects remain visible
-          Positioned.fill(child: AnimatedBloodBackground(cellCount: 9)),
-          Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: 520),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.85),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade300, width: 1.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 10,
-                        offset: Offset(0, 4),
+            // animated blood cells on top so their colors/effects remain visible
+            Positioned.fill(child: AnimatedBloodBackground(cellCount: 9)),
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24.0),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: 520),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade300, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 80,
-                          height: 80,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 6)],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.asset(
-                              'assets/images/blood_bridge.png',
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stack) => CircleAvatar(
-                                radius: 36,
-                                backgroundColor: Theme.of(context).primaryColor,
-                                child: Icon(Icons.bloodtype, size: 36, color: Colors.white),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 80,
+                              height: 80,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 6)],
                               ),
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: 12),
-                        Text('Welcome back', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black)),
-                        SizedBox(height: 6),
-                        Text('Serve Humanity!', style: TextStyle(color: Colors.black)),
-                        SizedBox(height: 18),
-                        Form(
-                          key: _formKey,
-                          child: Column(children: [
-                            TextFormField(
-                              controller: _emailCtl,
-                              keyboardType: TextInputType.emailAddress,
-                              style: TextStyle(color: Colors.black),
-                              decoration: InputDecoration(
-                                prefixIcon: Icon(Icons.email, color: Colors.black),
-                                labelText: 'Email',
-                                labelStyle: TextStyle(color: Colors.black),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.asset(
+                                  'assets/images/blood_bridge.png',
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stack) => CircleAvatar(
+                                    radius: 36,
+                                    backgroundColor: Theme.of(context).primaryColor,
+                                    child: Icon(Icons.bloodtype, size: 36, color: Colors.white),
+                                  ),
+                                ),
                               ),
-                              validator: (v) {
-                                if (v == null || v.trim().isEmpty) return 'Email required';
-                                if (!v.contains('@')) return 'Enter a valid email';
-                                return null;
-                              },
                             ),
                             SizedBox(height: 12),
-                            TextFormField(
-                              controller: _passCtl,
-                              obscureText: !_showPassword,
-                              style: TextStyle(color: Colors.black),
-                              decoration: InputDecoration(
-                                prefixIcon: Icon(Icons.lock, color: Colors.black),
-                                labelText: 'Password',
-                                labelStyle: TextStyle(color: Colors.black),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                suffixIcon: IconButton(
-                                  icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility, color: Colors.black),
-                                  onPressed: () => setState(() => _showPassword = !_showPassword),
-                                ),
-                              ),
-                              validator: (v) {
-                                if (v == null || v.isEmpty) return 'Password required';
-                                if (v.length < 4) return 'Password too short';
-                                return null;
-                              },
-                            ),
-                            SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48,
-                              child: OutlinedButton(
-                                  onPressed: _isLoading ? null : _login,
-                                  style: OutlinedButton.styleFrom(
-                                    backgroundColor: Colors.transparent,
-                                    foregroundColor: Colors.black,
-                                    side: BorderSide(color: Colors.black, width: 2),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                            Text('Welcome back', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black)),
+                            SizedBox(height: 6),
+                            Text('Serve Humanity!', style: TextStyle(color: Colors.black)),
+                            SizedBox(height: 18),
+                            Form(
+                              key: _formKey,
+                              child: Column(
+                                children: [
+                                  TextFormField(
+                                    controller: _emailCtl,
+                                    keyboardType: TextInputType.emailAddress,
+                                    style: TextStyle(color: Colors.black),
+                                    decoration: InputDecoration(
+                                      prefixIcon: Icon(Icons.email, color: Colors.black),
+                                      labelText: 'Email',
+                                      labelStyle: TextStyle(color: Colors.black),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    validator: (v) {
+                                      if (v == null || v.trim().isEmpty) return 'Email required';
+                                      if (!v.contains('@')) return 'Enter a valid email';
+                                      return null;
+                                    },
                                   ),
-                                  child: _isLoading ? BloodBridgeLoader(size: 24, duration: Duration(milliseconds: 600)) : Text('Login', style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.w600)),
-                                ),
-                            ),
-                            SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48,
-                              child: OutlinedButton(
-                                onPressed: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(builder: (_) => RegisterScreen()),
-                                  );
-                                },
-                                style: OutlinedButton.styleFrom(
-                                  backgroundColor: Colors.transparent,
-                                  foregroundColor: Colors.black,
-                                  side: BorderSide(color: Colors.black, width: 2),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                ),
-                                child: Text('Register', style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.w600)),
+                                  SizedBox(height: 12),
+                                  TextFormField(
+                                    controller: _passCtl,
+                                    obscureText: !_showPassword,
+                                    style: TextStyle(color: Colors.black),
+                                    decoration: InputDecoration(
+                                      prefixIcon: Icon(Icons.lock, color: Colors.black),
+                                      labelText: 'Password',
+                                      labelStyle: TextStyle(color: Colors.black),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                      suffixIcon: IconButton(
+                                        icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility, color: Colors.black),
+                                        onPressed: () => setState(() => _showPassword = !_showPassword),
+                                      ),
+                                    ),
+                                    validator: (v) {
+                                      if (v == null || v.isEmpty) return 'Password required';
+                                      if (v.length < 4) return 'Password too short';
+                                      return null;
+                                    },
+                                  ),
+                                  SizedBox(height: 16),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 50,
+                                    child: ElevatedButton(
+                                      onPressed: _isLoading ? null : _login,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.red.shade600,
+                                        foregroundColor: Colors.white,
+                                        elevation: 2,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                        padding: const EdgeInsets.symmetric(vertical: 14),
+                                        disabledBackgroundColor: Colors.grey.shade400,
+                                      ),
+                                      child: _isLoading 
+                                        ? BloodBridgeLoader(size: 24, duration: Duration(milliseconds: 600)) 
+                                        : Text('Login', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.w600)),
+                                    ),
+                                  ),
+                                  SizedBox(height: 12),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 48,
+                                    child: OutlinedButton(
+                                      onPressed: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(builder: (_) => RegisterScreen()),
+                                        );
+                                      },
+                                      style: OutlinedButton.styleFrom(
+                                        backgroundColor: Colors.transparent,
+                                        foregroundColor: Colors.black,
+                                        side: BorderSide(color: Colors.black, width: 2),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                      child: Text('Register', style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.w600)),
+                                    ),
+                                  ),
+                                  SizedBox(height: 8),
+                                  Center(
+                                    child: TextButton(
+                                      onPressed: _forgotPassword, 
+                                      child: Text('Forgot password!', style: TextStyle(color: Colors.black, fontSize: 13)),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            SizedBox(height: 8),
-                            Center(
-                              child: TextButton(
-                                onPressed: _forgotPassword, 
-                                child: Text('Forgot password!', style: TextStyle(color: Colors.black, fontSize: 13)),
-                              ),
-                            ),
-                          ]),
-                        ),
                       ],
                     ),
                   ),
@@ -488,8 +497,10 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
+        ),
         ],
       ),
-    );
+    ),
+  );
   }
 }

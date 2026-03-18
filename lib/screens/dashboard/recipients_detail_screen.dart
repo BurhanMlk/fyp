@@ -140,21 +140,21 @@ class _RecipientsDetailScreenState extends State<RecipientsDetailScreen> {
               },
               decoration: InputDecoration(
                 hintText: 'Search recipients by name, location, blood group...',
-                prefixIcon: Icon(Icons.search, color: Colors.blue),
+                prefixIcon: Icon(Icons.search, color: Colors.black),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.blue),
+                  borderSide: BorderSide(color: Colors.black, width: 2),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.blue.withOpacity(0.3)),
+                  borderSide: BorderSide(color: Colors.black, width: 2),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.blue, width: 2),
+                  borderSide: BorderSide(color: Colors.black, width: 2),
                 ),
                 filled: true,
-                fillColor: Colors.blue.withOpacity(0.05),
+                fillColor: Colors.white,
               ),
             ),
           ),
