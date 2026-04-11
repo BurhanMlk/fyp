@@ -142,14 +142,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Edit Profile'),
-        backgroundColor: Colors.red[700],
+        backgroundColor: Colors.red[400],
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.red[50]!, Colors.white],
+            colors: [Colors.white, Colors.white],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -229,7 +229,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ElevatedButton(
                   onPressed: _saveProfile,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red[700],
+                    backgroundColor: Colors.red[400],
                     foregroundColor: Colors.white,
                     padding: EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(

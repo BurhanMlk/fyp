@@ -125,24 +125,13 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
     Navigator.of(context).pop();
   }
 
-  Color _getUrgencyColor() {
-    switch (_urgency) {
-      case 'Critical': return Colors.red.shade900;
-      case 'High': return Colors.red.shade700;
-      case 'Medium': return Colors.orange.shade600;
-      case 'Low': return Colors.blue.shade600;
-      default: return Colors.red.shade700;
-    }
-  }
-
   InputDecoration _compactFieldDecoration({
     String? hintText,
     Widget? prefixIcon,
   }) {
     return InputDecoration(
       isDense: true,
-      filled: true,
-      fillColor: Colors.white.withOpacity(0.8),
+      filled: false,
       hintText: hintText,
       hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
       prefixIcon: prefixIcon,
@@ -287,6 +276,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                             value: _blood,
                             isExpanded: true,
                             itemHeight: _controlHeight,
+                            dropdownColor: Colors.white,
                             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
                             items: _bloodTypes.map((b) => DropdownMenuItem(
                               value: b,
@@ -313,7 +303,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.priority_high, color: _getUrgencyColor(), size: 24),
+                            Icon(Icons.priority_high, color: Colors.black87, size: 24),
                             SizedBox(width: 8),
                             Text(
                               'Urgency Level',
@@ -332,25 +322,11 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                             value: _urgency,
                             isExpanded: true,
                             itemHeight: _controlHeight,
+                            dropdownColor: Colors.white.withOpacity(0.92),
                             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
                             items: _urgencies.map((u) => DropdownMenuItem(
                               value: u,
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      color: u == 'Critical' ? Colors.red.shade900 :
-                                             u == 'High' ? Colors.red.shade700 :
-                                             u == 'Medium' ? Colors.orange.shade600 : Colors.blue.shade600,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(u, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                                ],
-                              ),
+                              child: Text(u, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                             )).toList(),
                             onChanged: (v) => setState(() => _urgency = v ?? _urgency),
                             decoration: _compactFieldDecoration(),
@@ -497,7 +473,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                             child: Container(
                               padding: EdgeInsets.symmetric(horizontal: 16),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.8),
+                                color: Colors.transparent,
                                 borderRadius: BorderRadius.circular(25),
                                 border: Border.all(
                                   color: Colors.grey.shade300,
@@ -568,8 +544,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
                           maxLines: 4,
                           style: TextStyle(fontSize: 16),
                           decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.white.withOpacity(0.8),
+                            filled: false,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
                               borderSide: BorderSide(color: Colors.grey.shade300, width: 1),

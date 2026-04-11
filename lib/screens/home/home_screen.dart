@@ -177,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: Image.asset(
-                        'assets/images/blood_bridge.png',
+                        'assets/images/blood_bridge_logo.png',
                         width: 48,
                         height: 48,
                         fit: BoxFit.contain,

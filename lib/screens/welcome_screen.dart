@@ -42,7 +42,7 @@ class WelcomeScreen extends StatelessWidget {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
                         child: Image.asset(
-                          'assets/images/blood_bridge.png',
+                          'assets/images/blood_bridge_logo.png',
                           height: 100,
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stack) => Center(

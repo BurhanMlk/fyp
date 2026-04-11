@@ -32,6 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _hasUploadedDocument = false;
   String _verificationStatus = 'not_uploaded';
+  bool _firstDonationApprovedByAdmin = false;
 
   @override
   void initState() {
@@ -66,6 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _verificationStatus = status.isEmpty
               ? (_hasUploadedDocument ? 'pending' : 'not_uploaded')
               : status;
+          _firstDonationApprovedByAdmin = data['firstDonationApproved'] == true;
         }
       }
 
@@ -113,6 +115,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _verificationStatus = status.isEmpty
                 ? (_hasUploadedDocument ? 'pending' : 'not_uploaded')
                 : status;
+            _firstDonationApprovedByAdmin = user['firstDonationApproved'] == true;
           }
           
           if (user['role'] == 'donor') _totalDonors++;
@@ -132,11 +135,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  String _welcomeDisplayName() {
+    final name = _userName.trim();
+    if (name.isNotEmpty) return name;
+
+    final email = _userEmail.trim();
+    if (email.isNotEmpty && email.contains('@')) {
+      return email.split('@').first;
+    }
+    return 'User';
+  }
+
+  String _welcomeRoleLabel() {
+    final role = _userRole.trim().toLowerCase();
+    if (role == 'user') return 'RECIPIENT';
+    if (role == 'donor' || role == 'recipient' || role == 'super_admin') {
+      return role.toUpperCase();
+    }
+    return 'RECIPIENT';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return Center(child: CircularProgressIndicator());
     }
+
+    final displayName = _welcomeDisplayName();
+    final roleLabel = _welcomeRoleLabel();
+    final normalizedRole = _userRole.trim().toLowerCase();
+    final isPrimaryRole =
+      normalizedRole == 'donor' || normalizedRole == 'recipient' || normalizedRole == 'user';
 
     return Scaffold(
       body: Stack(
@@ -203,7 +232,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     SizedBox(height: 8),
                     Text(
-                      _userName.toUpperCase(),
+                      displayName.toUpperCase(),
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -215,11 +244,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: _userRole == 'donor' 
-                              ? [Color(0xFFBDBDBD), Color(0xFF9E9E9E)] // Light grey for donors
-                              : _userRole == 'recipient'
-                                  ? [Color(0xFFBDBDBD), Color(0xFF9E9E9E)] // Light grey for recipients
-                                  : [Color(0xFFBDBDBD), Color(0xFF9E9E9E)], // Light grey for others
+                          colors: isPrimaryRole
+                              ? [Color(0xFFDDE5B6), Color(0xFFC8D59C)]
+                              : [Color(0xFFBDBDBD), Color(0xFF9E9E9E)],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -233,9 +260,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ],
                       ),
                       child: Text(
-                        _userRole.toUpperCase(),
+                        roleLabel,
                         style: TextStyle(
-                          color: Colors.white,
+                          color: isPrimaryRole ? Colors.black87 : Colors.white,
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
@@ -386,7 +413,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white.withOpacity(0.85),
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: Colors.black, width: 2),
@@ -448,7 +475,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final d = donations[i];
             return Card(
               margin: EdgeInsets.symmetric(vertical: 4),
-              color: Colors.white.withOpacity(0.85),
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
                 side: BorderSide(color: Colors.black, width: 2),
@@ -495,7 +522,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final r = received[i];
             return Card(
               margin: EdgeInsets.symmetric(vertical: 4),
-              color: Colors.white.withOpacity(0.85),
+              color: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
                 side: BorderSide(color: Colors.black, width: 2),
@@ -684,22 +711,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (context, setDialogState) {
+          final screenSize = MediaQuery.of(context).size;
+          final dialogWidth = screenSize.width < 460 ? screenSize.width * 0.88 : 400.0;
+          final dialogHeight = screenSize.height < 760 ? screenSize.height * 0.6 : 450.0;
+
+          return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
           backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Colors.black, width: 1.5),
           ),
-          title: Row(
-            children: [
-              Icon(Icons.chat, color: Colors.indigo),
-              SizedBox(width: 8),
-              Text('Messages with Admin'),
-            ],
+          icon: Icon(Icons.chat, color: Colors.indigo),
+          title: Text(
+            'Messages with Admin',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: screenSize.width < 360 ? 18 : 20,
+            ),
           ),
           content: SizedBox(
-            width: 400,
-            height: 450,
+            width: dialogWidth,
+            height: dialogHeight,
             child: Column(
               children: [
                 Expanded(
@@ -891,18 +927,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Text('Close', style: TextStyle(color: Colors.white)),
             ),
           ],
-        ),
+        );
+        },
       ),
     );
   }
 
   Widget _chatBubble(String sender, String message, String time, bool isMe, bool isRead) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final bubbleMaxWidth = screenWidth < 420 ? screenWidth * 0.5 : 280.0;
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: EdgeInsets.symmetric(vertical: 4),
         padding: EdgeInsets.all(12),
-        constraints: BoxConstraints(maxWidth: 280),
+        constraints: BoxConstraints(maxWidth: bubbleMaxWidth),
         decoration: BoxDecoration(
           color: isMe ? Colors.indigo[100] : Colors.grey[100],
           border: Border.all(color: Color(0xFFB7C8A4), width: 1.4),
@@ -967,10 +1007,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               final donations = snapshot.data ?? [];
               final donationCount = donations.length;
-              final firstDonationEarned = donationCount >= 1;
+                final firstDonationEarned = donationCount >= 1 || _firstDonationApprovedByAdmin;
               final fiveDonationsEarned = donationCount >= 5;
               final verifiedEarned = _verificationStatus == 'approved';
-              final points = (donationCount * 100) + (verifiedEarned ? 50 : 0);
+                final displayDonationCount = donationCount > 0
+                  ? donationCount
+                  : (firstDonationEarned ? 1 : 0);
+                final points = (displayDonationCount * 100) + (verifiedEarned ? 50 : 0);
 
               return Column(
                 children: [
@@ -1009,7 +1052,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             );
                             return;
                           }
-                          _showCertificateDialog(donationCount: donationCount);
+                          _showCertificateDialog(donationCount: displayDonationCount);
                         },
                         icon: Icon(Icons.workspace_premium, size: 18),
                         label: Text('Certificate'),
@@ -1036,7 +1079,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           Colors.red,
                           firstDonationEarned,
                           onTap: firstDonationEarned
-                              ? () => _showCertificateDialog(donationCount: donationCount)
+                              ? () => _showCertificateDialog(donationCount: displayDonationCount)
                               : null,
                         ),
                         _badgeItem(Icons.star, '5 Donations', Colors.amber, fiveDonationsEarned),

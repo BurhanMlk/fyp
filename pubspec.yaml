@@ -111,7 +111,7 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/blood_bridge.png"
+  image_path: "assets/images/blood_bridge_logo.png"
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/images/blood_bridge.png"
+  adaptive_icon_foreground: "assets/images/blood_bridge_logo.png"
 

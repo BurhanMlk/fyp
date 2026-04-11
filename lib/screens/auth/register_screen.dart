@@ -150,8 +150,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     showDialog(context: context, barrierDismissible: false, builder: (_) => Center(child: BloodBridgeLoader()));
 
-  // prepare photo data (base64) if uploaded — only include when provided
-  final String? photoData = (_pickedBytes != null) ? base64Encode(_pickedBytes!) : null;
+  // photo is required for registration (validated above)
+  final String photoData = base64Encode(_pickedBytes!);
 
     // If Firebase is available use it, otherwise save demo user locally so the UI demo works.
     print('🔍 Firebase initialized: ${FirebaseService.initialized}');
@@ -173,7 +173,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'approved': (_role == 'donor') ? false : true,
           'createdAt': FieldValue.serverTimestamp(),
         };
-        if (photoData != null) data['photoData'] = photoData;
+        data['photoData'] = photoData;
         
         try {
           await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set(data);
@@ -243,8 +243,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'age': int.tryParse(age) ?? 0,
           'gender': gender,
           'location': location,
-          // only include photoData when provided
-          if (photoData != null) 'photoData': photoData,
+          'photoData': photoData,
           'createdAt': DateTime.now().toIso8601String(),
           // donors require admin approval before recipients can access contact
           'approved': (_role == 'donor') ? false : true,
@@ -278,7 +277,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final ImageSource? source = await showDialog<ImageSource>(
         context: context,
         builder: (context) => AlertDialog(
-          backgroundColor: Colors.white.withOpacity(0.92),
+          backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: Colors.black, width: 2),
@@ -418,7 +417,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                       // Photo upload & preview
-                      Text('Profile Photo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black)),
+                      Text('Profile Photo *', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black)),
                       SizedBox(height: 8),
                       if (_pickedBytes != null)
                         Container(
@@ -503,7 +502,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             child: DropdownButtonFormField<String>(
                               value: _gender,
                               style: TextStyle(color: Colors.black),
-                              dropdownColor: Colors.white.withOpacity(0.95),
+                              dropdownColor: Colors.white,
                               decoration: InputDecoration(
                                 hintText: 'Gender',
                                 hintStyle: TextStyle(color: Colors.black54),
@@ -595,7 +594,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             child: DropdownButtonFormField<String>(
                               value: _bloodGroup,
                               style: TextStyle(color: Colors.black),
-                              dropdownColor: Colors.white.withOpacity(0.95),
+                              dropdownColor: Colors.white,
                               decoration: InputDecoration(
                                 hintText: 'Blood group',
                                 hintStyle: TextStyle(color: Colors.black54),
@@ -614,7 +613,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             child: DropdownButtonFormField<String>(
                               value: _role,
                               style: TextStyle(color: Colors.black),
-                              dropdownColor: Colors.white.withOpacity(0.95),
+                              dropdownColor: Colors.white,
                               decoration: InputDecoration(
                                 hintText: 'Role',
                                 hintStyle: TextStyle(color: Colors.black54),
@@ -636,7 +635,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton(
-                            onPressed: _register,
+                            onPressed: _pickedBytes == null ? null : _register,
                             style: OutlinedButton.styleFrom(
                               backgroundColor: Colors.transparent,
                               foregroundColor: Colors.black,

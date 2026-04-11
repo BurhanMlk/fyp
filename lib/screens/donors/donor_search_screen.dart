@@ -133,7 +133,7 @@ class _DonorSearchScreenState extends State<DonorSearchScreen> {
         padding: const EdgeInsets.all(12.0),
         child: Column(
           children: [
-            Row(children: [Expanded(child: DropdownButtonFormField<String>(value: _blood, items: _bloodTypes.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(), onChanged: (v) => setState(() => _blood = v ?? _blood), decoration: InputDecoration(labelText: 'Blood group'))), SizedBox(width: 12), Column(children: [Text('Max km'), SizedBox(height: 4), Text('${_maxKm.toInt()} km')])]),
+            Row(children: [Expanded(child: DropdownButtonFormField<String>(value: _blood, dropdownColor: Colors.white, items: _bloodTypes.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(), onChanged: (v) => setState(() => _blood = v ?? _blood), decoration: InputDecoration(labelText: 'Blood group'))), SizedBox(width: 12), Column(children: [Text('Max km'), SizedBox(height: 4), Text('${_maxKm.toInt()} km')])]),
             Slider(min: 1, max: 200, divisions: 40, value: _maxKm, onChanged: (v) => setState(() => _maxKm = v)),
             Row(children: [Checkbox(value: _onlyAvailable, onChanged: (v) => setState(() => _onlyAvailable = v ?? true)), Text('Only show available donors')]),
             SizedBox(height: 8),

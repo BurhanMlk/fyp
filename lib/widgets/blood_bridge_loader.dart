@@ -54,7 +54,7 @@ class _BloodBridgeLoaderState extends State<BloodBridgeLoader>
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: Image.asset(
-            'assets/images/blood_bridge.png',
+            'assets/images/blood_bridge_logo.png',
             fit: BoxFit.contain,
             errorBuilder: (context, error, stack) => Icon(
               Icons.bloodtype,

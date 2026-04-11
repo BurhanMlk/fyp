@@ -1251,7 +1251,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: Image.asset(
-                      'assets/images/blood_bridge.png',
+                      'assets/images/blood_bridge_logo.png',
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stack) => Icon(Icons.admin_panel_settings, size: 40, color: Color(0xFFD32F2F)),
                     ),
@@ -3143,6 +3143,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     if (FirebaseService.initialized) {
       try {
         await FirebaseFirestore.instance.collection('donor_requests').doc(_selectedId).update({'status': 'approved', 'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin', 'handledAt': DateTime.now().toIso8601String(), 'sharedData': _selectedItem});
+        await _markFirstDonationApproved(_selectedItem!);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Approved')));
       } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
     } else {
@@ -3157,9 +3158,126 @@ class _AdminDashboardState extends State<AdminDashboard> {
       r['sharedData'] = _selectedItem;
       list[idx] = jsonEncode(r);
       await prefs.setStringList('donor_requests', list);
+      await _markFirstDonationApproved(r);
       setState(() { _selectedItem = Map<String, dynamic>.from(r); });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Approved (demo)')));
     }
+  }
+
+  String _extractDonorEmail(Map<String, dynamic> request) {
+    final shared = request['sharedData'] is Map
+        ? Map<String, dynamic>.from(request['sharedData'] as Map)
+        : <String, dynamic>{};
+
+    final candidates = [
+      request['donorEmail'],
+      request['email'],
+      request['userEmail'],
+      request['from'],
+      request['requestedBy'],
+      shared['donorEmail'],
+      shared['email'],
+      shared['userEmail'],
+    ];
+
+    for (final c in candidates) {
+      final value = (c ?? '').toString().trim().toLowerCase();
+      if (value.isNotEmpty && value.contains('@')) return value;
+    }
+    return '';
+  }
+
+  String _extractDonorName(Map<String, dynamic> request) {
+    final shared = request['sharedData'] is Map
+        ? Map<String, dynamic>.from(request['sharedData'] as Map)
+        : <String, dynamic>{};
+
+    final candidates = [
+      request['donorName'],
+      request['name'],
+      shared['donorName'],
+      shared['name'],
+    ];
+
+    for (final c in candidates) {
+      final value = (c ?? '').toString().trim();
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  Future<void> _markFirstDonationApproved(Map<String, dynamic> request) async {
+    final donorEmail = _extractDonorEmail(request);
+    final donorName = _extractDonorName(request).toLowerCase();
+
+    if (FirebaseService.initialized) {
+      try {
+        QuerySnapshot<Map<String, dynamic>> snap;
+        if (donorEmail.isNotEmpty) {
+          snap = await FirebaseFirestore.instance
+              .collection('users')
+              .where('email', isEqualTo: donorEmail)
+              .limit(1)
+              .get();
+        } else if (donorName.isNotEmpty) {
+          snap = await FirebaseFirestore.instance
+              .collection('users')
+              .where('role', isEqualTo: 'donor')
+              .limit(50)
+              .get();
+          final matched = snap.docs.where((d) =>
+              (d.data()['name'] ?? '').toString().trim().toLowerCase() == donorName);
+          if (matched.isNotEmpty) {
+            await matched.first.reference.set({
+              'firstDonationApproved': true,
+              'firstDonationApprovedAt': DateTime.now().toIso8601String(),
+            }, SetOptions(merge: true));
+          }
+          return;
+        } else {
+          return;
+        }
+
+        if (snap.docs.isNotEmpty) {
+          await snap.docs.first.reference.set({
+            'firstDonationApproved': true,
+            'firstDonationApprovedAt': DateTime.now().toIso8601String(),
+          }, SetOptions(merge: true));
+        }
+      } catch (_) {}
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final users = prefs.getStringList('demo_users') ?? <String>[];
+      bool updated = false;
+
+      for (int i = 0; i < users.length; i++) {
+        try {
+          final Map<String, dynamic> u = jsonDecode(users[i]);
+          final role = (u['role'] ?? '').toString();
+          if (role != 'donor') continue;
+
+          final email = (u['email'] ?? '').toString().trim().toLowerCase();
+          final name = (u['name'] ?? '').toString().trim().toLowerCase();
+
+          final matchedByEmail = donorEmail.isNotEmpty && email == donorEmail;
+          final matchedByName = donorName.isNotEmpty && name == donorName;
+          if (!matchedByEmail && !matchedByName) continue;
+
+          u['firstDonationApproved'] = true;
+          u['firstDonationApprovedAt'] = DateTime.now().toIso8601String();
+          users[i] = jsonEncode(u);
+          updated = true;
+          break;
+        } catch (_) {}
+      }
+
+      if (updated) {
+        await prefs.setStringList('demo_users', users);
+      }
+    } catch (_) {}
   }
 
   Future<void> _handleSelectedEmergency() async {
@@ -3520,49 +3638,41 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 20),
           
-          // User List
-          Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // User List (shown without outer card for better visibility)
+          Container(
+            padding: EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Color(0xFF1976D2).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
               children: [
-                Container(
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Color(0xFF1976D2).withOpacity(0.1),
-                    borderRadius: BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
+                Icon(Icons.list_alt, color: Color(0xFF1976D2)),
+                SizedBox(width: 8),
+                Text('All Registered Users', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1976D2))),
+                Spacer(),
+                ElevatedButton.icon(
+                  icon: Icon(Icons.person_add, size: 18),
+                  label: Text('Add User'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color(0xFF1976D2),
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.list_alt, color: Color(0xFF1976D2)),
-                      SizedBox(width: 8),
-                      Text('All Registered Users', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1976D2))),
-                      Spacer(),
-                      ElevatedButton.icon(
-                        icon: Icon(Icons.person_add, size: 18),
-                        label: Text('Add User'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF1976D2),
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        onPressed: () => _showAddUserDialog(),
-                      ),
-                      SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(Icons.refresh, color: Color(0xFF1976D2)),
-                        onPressed: _loadStats,
-                      ),
-                    ],
-                  ),
+                  onPressed: () => _showAddUserDialog(),
                 ),
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: 400),
-                  child: _buildUserList(),
+                SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(Icons.refresh, color: Color(0xFF1976D2)),
+                  onPressed: _loadStats,
                 ),
               ],
             ),
+          ),
+          SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: 560),
+            child: _buildUserList(),
           ),
         ],
       ),
@@ -4104,7 +4214,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   // Trigger rebuild to refresh user list
                 });
                 _loadStats();
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('User deleted'), backgroundColor: Colors.orange));
+                _showTopRightSuccess('User deleted');
               }
             },
           ),
@@ -4129,6 +4239,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
         await prefs.setStringList('demo_users', list);
       }
     }
+  }
+
+  void _showTopRightSuccess(String message) {
+    final width = MediaQuery.of(context).size.width;
+    final leftInset = (width - 300).clamp(16.0, width - 32.0);
+
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+          margin: EdgeInsets.fromLTRB(leftInset, 12, 16, 0),
+        ),
+      );
   }
 
   // =====================================================================

@@ -110,8 +110,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
                 hintText: 'Search',
                 hintStyle: TextStyle(fontSize: 14),
                 prefixIcon: Icon(Icons.search, color: Colors.black, size: 20),
-                filled: true,
-                fillColor: Colors.white,
+                filled: false,
                 contentPadding: EdgeInsets.symmetric(vertical: 8),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25),
@@ -420,11 +419,12 @@ class _DonorListScreenState extends State<DonorListScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.white.withOpacity(0.85),
           borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.black, width: 1),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withOpacity(0.08),
               blurRadius: 10,
               offset: const Offset(0, 2),
             ),
@@ -487,15 +487,16 @@ class _DonorListScreenState extends State<DonorListScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFDECEC),
+                      color: Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black, width: 2),
                     ),
                     child: const Text(
                       'Donor',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFFB71C1C),
+                        color: Colors.black,
                       ),
                     ),
                   )
@@ -503,15 +504,16 @@ class _DonorListScreenState extends State<DonorListScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE8EEF6),
+                      color: Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black, width: 2),
                     ),
                     child: const Text(
                       'Recipient',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF1E4E79),
+                        color: Colors.black,
                       ),
                     ),
                   )
@@ -519,15 +521,16 @@ class _DonorListScreenState extends State<DonorListScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE6ECF5),
+                      color: Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black, width: 2),
                     ),
                     child: const Text(
                       'Super_admin',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF355070),
+                        color: Colors.black,
                       ),
                     ),
                   ),
@@ -624,37 +627,85 @@ class _DonorListScreenState extends State<DonorListScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(name),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildInfoRow(Icons.bloodtype, 'Blood Group', bloodGroup),
-            const SizedBox(height: 8),
-            _buildInfoRow(Icons.location_on, 'Location', location),
-            const SizedBox(height: 8),
-            _buildInfoRow(Icons.phone, 'Contact', contact),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          if (contact != 'No contact')
-            OutlinedButton(
-              onPressed: () {
-                final uri = Uri.parse('tel:$contact');
-                launchUrl(uri);
-              },
-              style: OutlinedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                foregroundColor: Colors.black,
-                side: BorderSide(color: Colors.black, width: 2),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        contentPadding: EdgeInsets.zero,
+        content: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.black, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
-              child: const Text('Call'),
-            ),
-        ],
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 20),
+              _buildInfoRow(Icons.bloodtype, 'Blood Group', bloodGroup),
+              const SizedBox(height: 10),
+              _buildInfoRow(Icons.location_on, 'Location', location),
+              const SizedBox(height: 10),
+              _buildInfoRow(Icons.phone, 'Contact', contact),
+              const SizedBox(height: 22),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  if (contact != 'No contact') ...[
+                    const SizedBox(width: 10),
+                    OutlinedButton(
+                      onPressed: () {
+                        final uri = Uri.parse('tel:$contact');
+                        launchUrl(uri);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.black,
+                        side: const BorderSide(color: Colors.black, width: 2),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                      ),
+                      child: const Text(
+                        'Call',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -662,16 +713,22 @@ class _DonorListScreenState extends State<DonorListScreen> {
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: const Color(0xFFB71C1C)),
+        Icon(icon, size: 20, color: Colors.black),
         const SizedBox(width: 8),
         Text(
           '$label: ',
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: const TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(color: Colors.black87),
+            style: const TextStyle(
+              color: Colors.black,
+              fontSize: 14,
+            ),
           ),
         ),
       ],
