@@ -25,6 +25,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _userName = '';
   String _userRole = '';
   String _userEmail = '';
+  String _userLocation = '';
   int _totalDonors = 0;
   int _totalRecipients = 0;
   int _pendingRequests = 0;
@@ -62,6 +63,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final data = userDoc.data() ?? <String, dynamic>{};
           _userName = data['name'] ?? 'User';
           _userRole = data['role'] ?? 'user';
+          _userLocation = data['location'] ?? '';
           _hasUploadedDocument = (data['verificationDocumentData'] ?? '').toString().isNotEmpty;
           final status = (data['verificationStatus'] ?? '').toString();
           _verificationStatus = status.isEmpty
@@ -110,6 +112,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (user['email'] == currentEmail) {
             _userName = user['name'] ?? 'User';
             _userRole = user['role'] ?? 'user';
+            _userLocation = user['location'] ?? '';
             _hasUploadedDocument = (user['verificationDocumentData'] ?? '').toString().isNotEmpty;
             final status = (user['verificationStatus'] ?? '').toString();
             _verificationStatus = status.isEmpty
@@ -1619,6 +1622,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<List<Map<String, dynamic>>> _loadBloodBanks() async {
+    try {
+      List<Map<String, dynamic>> allBanks = [];
+      
+      if (FirebaseService.initialized) {
+        final snap = await FirebaseFirestore.instance.collection('blood_banks').get();
+        allBanks = snap.docs.map((doc) {
+          final data = doc.data();
+          data['id'] = doc.id;
+          return data;
+        }).toList();
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final list = prefs.getStringList('demo_blood_banks') ?? <String>[];
+        allBanks = list.map((s) => jsonDecode(s) as Map<String, dynamic>).toList();
+      }
+      
+      // Filter by user location if available
+      if (_userLocation.isNotEmpty) {
+        return allBanks.where((bank) {
+          final bankLocation = (bank['location'] ?? '').toString().toLowerCase();
+          final userLoc = _userLocation.toLowerCase();
+          return bankLocation.contains(userLoc) || userLoc.contains(bankLocation);
+        }).toList();
+      }
+      
+      return allBanks;
+    } catch (e) {
+      print('Error loading blood banks: $e');
+      return [];
+    }
+  }
+
   void _showBloodBanksDialog() {
     showDialog(
       context: context,
@@ -1634,13 +1670,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
         content: SizedBox(
           width: 400,
           height: 400,
-          child: ListView(
-            children: [
-              _bloodBankTile('City General Hospital', '2.3 km away', 'Open 24/7', true),
-              _bloodBankTile('Red Crescent Blood Bank', '3.5 km away', 'Open 8AM - 10PM', true),
-              _bloodBankTile('Medical Center', '5.1 km away', 'Open 9AM - 6PM', false),
-              _bloodBankTile('Community Blood Bank', '7.8 km away', 'Open 24/7', true),
-            ],
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _loadBloodBanks(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Center(child: CircularProgressIndicator());
+              }
+              
+              final bloodBanks = snapshot.data ?? [];
+              
+              if (bloodBanks.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.local_hospital, size: 64, color: Colors.grey[300]),
+                      SizedBox(height: 16),
+                      Text('Sorry you don\'t have nearest blood bank', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600)),
+                      SizedBox(height: 8),
+                      Text('No blood banks in your location yet', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                    ],
+                  ),
+                );
+              }
+              
+              return ListView.builder(
+                itemCount: bloodBanks.length,
+                itemBuilder: (context, index) {
+                  final bank = bloodBanks[index];
+                  // Try to get location first, fallback to address
+                  final displayLocation = (bank['location'] ?? bank['address'] ?? 'Location not available').toString();
+                  return _bloodBankTile(
+                    bank['name'] ?? 'Blood Bank',
+                    displayLocation,
+                  );
+                },
+              );
+            },
           ),
         ),
         actions: [
@@ -1659,34 +1725,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _bloodBankTile(String name, String distance, String hours, bool hasStock) {
+  Widget _bloodBankTile(String name, String location) {
     return Card(
-      margin: EdgeInsets.symmetric(vertical: 4),
+      margin: EdgeInsets.symmetric(vertical: 8),
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: Colors.red[50],
           child: Icon(Icons.local_hospital, color: Colors.red),
         ),
         title: Text(name, style: TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(distance),
-            Text(hours, style: TextStyle(fontSize: 11)),
-          ],
-        ),
-        trailing: Container(
-          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: hasStock ? Colors.green[600] : Colors.red[600],
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            hasStock ? 'Available' : 'Low Stock',
-            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-          ),
-        ),
-        onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Opening $name...'))),
+        subtitle: Text(location, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+        onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Viewing $name...'))),
       ),
     );
   }

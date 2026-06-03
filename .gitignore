@@ -60,3 +60,8 @@ local.properties
 *.pem
 *.p12
 **/secrets/
+android/key.properties
+android/*.jks
+android/*.keystore
+android/app/*.jks
+android/app/*.keystore

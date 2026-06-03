@@ -16,6 +16,8 @@ class DonorsDetailScreen extends StatefulWidget {
 class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
   List<Map<String, dynamic>> _donors = [];
   bool _isLoading = true;
+  String? _currentRole;
+  String? _currentEmail;
   String _searchQuery = '';
   String _selectedBloodGroup = '';
   String _selectedLocation = '';
@@ -26,8 +28,49 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _loadCurrentUser();
     _loadDonors();
   }
+
+  Future<void> _loadCurrentUser() async {
+    if (FirebaseService.initialized) {
+      final u = FirebaseAuth.instance.currentUser;
+      setState(() {
+        _currentEmail = u?.email;
+      });
+      if (u != null) {
+        try {
+          final snap = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
+          if (!mounted) return;
+          if (snap.exists) {
+            setState(() {
+              _currentRole = snap.data()?['role']?.toString();
+            });
+          }
+        } catch (_) {}
+      }
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final currentEmail = prefs.getString('demo_current_email');
+      final users = prefs.getStringList('demo_users') ?? <String>[];
+      String? role;
+      try {
+        final me = users
+            .map((s) => jsonDecode(s) as Map<String, dynamic>)
+            .firstWhere((u) => (u['email'] ?? '') == (currentEmail ?? ''), orElse: () => <String, dynamic>{});
+        role = me['role']?.toString();
+      } catch (_) {
+        role = null;
+      }
+      if (!mounted) return;
+      setState(() {
+        _currentEmail = currentEmail;
+        _currentRole = role;
+      });
+    }
+  }
+
+  bool get _canManageDonors => _currentRole == 'super_admin';
 
   Future<void> _loadDonors() async {
     setState(() => _isLoading = true);
@@ -525,6 +568,7 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
     final location = donor['location'] ?? 'N/A';
     final approved = donor['approved'] == true;
     final photoData = donor['photoData'];
+    final donorDocId = (donor['id'] ?? '').toString();
 
     // Get initials for avatar
     String getInitials(String name) {
@@ -632,6 +676,42 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
             // Badges and Button Column
             Column(
               children: [
+                if (_canManageDonors)
+                  PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'edit') {
+                        _showEditDonorDialog(donor);
+                      } else if (value == 'delete') {
+                        _confirmDeleteDonor(donorDocId, donor);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem<String>(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit, size: 18),
+                            SizedBox(width: 8),
+                            Text('Edit'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete, color: Colors.red, size: 18),
+                            SizedBox(width: 8),
+                            Text('Delete', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
+                      ),
+                    ],
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.more_vert, size: 20),
+                    ),
+                  ),
                 // Donor Badge
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -678,6 +758,203 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _showEditDonorDialog(Map<String, dynamic> donor) async {
+    final nameController = TextEditingController(text: (donor['name'] ?? '').toString());
+    final contactController = TextEditingController(text: (donor['contact'] ?? '').toString());
+    final locationController = TextEditingController(text: (donor['location'] ?? '').toString());
+    String selectedBloodGroup = (donor['bloodGroup'] ?? '').toString();
+    bool approved = donor['approved'] == true;
+    bool available = donor['availability'] != false;
+
+    if (!_bloodGroups.contains(selectedBloodGroup)) {
+      selectedBloodGroup = _bloodGroups.first;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Edit Donor'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(labelText: 'Name'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: selectedBloodGroup,
+                      decoration: const InputDecoration(labelText: 'Blood Group'),
+                      items: _bloodGroups
+                          .map((bg) => DropdownMenuItem<String>(value: bg, child: Text(bg)))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => selectedBloodGroup = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: contactController,
+                      decoration: const InputDecoration(labelText: 'Contact'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: locationController,
+                      decoration: const InputDecoration(labelText: 'Location'),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Approved'),
+                      value: approved,
+                      onChanged: (value) => setDialogState(() => approved = value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Available'),
+                      value: available,
+                      onChanged: (value) => setDialogState(() => available = value),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final updates = <String, dynamic>{
+                      'name': nameController.text.trim(),
+                      'bloodGroup': selectedBloodGroup,
+                      'contact': contactController.text.trim(),
+                      'location': locationController.text.trim(),
+                      'approved': approved,
+                      'availability': available,
+                    };
+                    Navigator.pop(context);
+                    await _updateDonor(donor, updates);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _updateDonor(Map<String, dynamic> donor, Map<String, dynamic> updates) async {
+    try {
+      if (FirebaseService.initialized) {
+        final donorId = (donor['id'] ?? '').toString();
+        if (donorId.isEmpty) {
+          throw Exception('Donor id not found.');
+        }
+        await FirebaseFirestore.instance.collection('users').doc(donorId).update(updates);
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final donorEmail = (donor['email'] ?? '').toString();
+
+        final updatedUsers = users.map((userStr) {
+          try {
+            final user = jsonDecode(userStr) as Map<String, dynamic>;
+            if ((user['email'] ?? '').toString() == donorEmail && (user['role'] ?? '').toString() == 'donor') {
+              user.addAll(updates);
+            }
+            return jsonEncode(user);
+          } catch (_) {
+            return userStr;
+          }
+        }).toList();
+
+        await prefs.setStringList('demo_users', updatedUsers);
+      }
+
+      await _loadDonors();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Donor updated successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update donor: $e')),
+      );
+    }
+  }
+
+  Future<void> _confirmDeleteDonor(String donorDocId, Map<String, dynamic> donor) async {
+    final donorName = (donor['name'] ?? 'this donor').toString();
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete donor'),
+            content: Text('Are you sure you want to delete $donorName? This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('Delete', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirm) return;
+    await _deleteDonor(donorDocId, donor);
+  }
+
+  Future<void> _deleteDonor(String donorDocId, Map<String, dynamic> donor) async {
+    try {
+      if (FirebaseService.initialized) {
+        if (donorDocId.isEmpty) {
+          throw Exception('Donor id not found.');
+        }
+        await FirebaseFirestore.instance.collection('users').doc(donorDocId).delete();
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final donorEmail = (donor['email'] ?? '').toString();
+
+        final updatedUsers = users.where((userStr) {
+          try {
+            final user = jsonDecode(userStr) as Map<String, dynamic>;
+            return !((user['email'] ?? '').toString() == donorEmail && (user['role'] ?? '').toString() == 'donor');
+          } catch (_) {
+            return true;
+          }
+        }).toList();
+
+        await prefs.setStringList('demo_users', updatedUsers);
+      }
+
+      await _loadDonors();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Donor deleted successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete donor: $e')),
+      );
+    }
   }
 
   void _showDonorDetails(Map<String, dynamic> donor) {

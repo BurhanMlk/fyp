@@ -42,6 +42,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final List<String> _bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
   final List<String> _genders = ['Male', 'Female', 'Other'];
 
+  String _formatCNIC(String input) {
+    // Remove all non-digit characters
+    final digits = input.replaceAll(RegExp(r'\D'), '');
+    
+    // Limit to 13 digits
+    if (digits.length > 13) {
+      return _formatCNIC(digits.substring(0, 13));
+    }
+    
+    // Format: XXXXX-XXXXXXX-X
+    if (digits.length <= 5) {
+      return digits;
+    } else if (digits.length <= 12) {
+      return '${digits.substring(0, 5)}-${digits.substring(5)}';
+    } else {
+      return '${digits.substring(0, 5)}-${digits.substring(5, 12)}-${digits.substring(12)}';
+    }
+  }
+
   @override
   void dispose() {
     _nameCtl.dispose();
@@ -564,6 +583,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       TextField(
                         controller: _cnicCtl,
                         style: TextStyle(color: Colors.black),
+                        onChanged: (value) {
+                          final formatted = _formatCNIC(value);
+                          if (formatted != value) {
+                            _cnicCtl.text = formatted;
+                            _cnicCtl.selection = TextSelection.fromPosition(
+                              TextPosition(offset: formatted.length),
+                            );
+                          }
+                        },
                         decoration: InputDecoration(
                           hintText: 'CNIC (12345-1234567-1)',
                           hintStyle: TextStyle(color: Colors.black54),

@@ -51,6 +51,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   String _selectedBroadcastTarget = 'all';
   int _newMessagesCount = 0;
   Map<String, dynamic>? _selectedMessage; // For responding to messages
+  String _allDonorsSearchQuery = '';
 
   @override
   void initState() {
@@ -97,6 +98,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
         } catch (_) {}
       }
       return false;
+    }
+  }
+
+  String _formatCNIC(String input) {
+    // Remove all non-digit characters
+    final digits = input.replaceAll(RegExp(r'\D'), '');
+    
+    // Limit to 13 digits
+    if (digits.length > 13) {
+      return _formatCNIC(digits.substring(0, 13));
+    }
+    
+    // Format: XXXXX-XXXXXXX-X
+    if (digits.length <= 5) {
+      return digits;
+    } else if (digits.length <= 12) {
+      return '${digits.substring(0, 5)}-${digits.substring(5)}';
+    } else {
+      return '${digits.substring(0, 5)}-${digits.substring(5, 12)}-${digits.substring(12)}';
     }
   }
 
@@ -1708,21 +1728,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ),
         if (_selectedItem != null)
           SizedBox(
-            height: 360,
+            height: 220,
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Details', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
-                  const SizedBox(height: 12),
+                  Text('Details', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
+                  const SizedBox(height: 8),
                   Expanded(
                     child: Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       color: Colors.white,
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16.0),
+                        padding: const EdgeInsets.all(12.0),
                         child: _buildDetailsPanel(),
                       ),
                     ),
@@ -2144,12 +2164,26 @@ class _AdminDashboardState extends State<AdminDashboard> {
         builder: (context, snap) {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
           final docs = snap.data!.docs;
-          if (docs.isEmpty) return Center(child: Text('No donors found'));
-          return ListView.builder(
+          final filteredDocs = docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return _matchesAllDonorsSearch(data);
+          }).toList();
+          if (filteredDocs.isEmpty) {
+            return Center(
+              child: Text(
+                _allDonorsSearchQuery.trim().isEmpty ? 'No donors found' : 'No donors match your search',
+              ),
+            );
+          }
+          return Column(
+            children: [
+              _buildAllDonorsSearchBar(),
+              Expanded(
+                child: ListView.builder(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            itemCount: docs.length,
+            itemCount: filteredDocs.length,
             itemBuilder: (context, i) {
-              final d = docs[i];
+              final d = filteredDocs[i];
               final Map<String, dynamic> rd = d.data() as Map<String, dynamic>;
               final approved = rd['approved'] ?? false;
               return Card(
@@ -2264,6 +2298,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 ),
               );
             },
+                ),
+              ),
+            ],
           );
         },
       );
@@ -2277,15 +2314,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
         final donors = list.where((s) {
           try {
             final Map<String, dynamic> u = jsonDecode(s);
-            return (u['role'] ?? '') == 'donor';
+            return (u['role'] ?? '') == 'donor' && _matchesAllDonorsSearch(u);
           } catch (_) {
             return false;
           }
         }).toList();
         
-        if (donors.isEmpty) return Center(child: Text('No donors found (demo)'));
-        
-        return ListView.builder(
+        if (donors.isEmpty) {
+          return Center(
+            child: Text(
+              _allDonorsSearchQuery.trim().isEmpty ? 'No donors found (demo)' : 'No donors match your search',
+            ),
+          );
+        }
+
+        return Column(
+          children: [
+            _buildAllDonorsSearchBar(),
+            Expanded(
+              child: ListView.builder(
           padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           itemCount: donors.length,
           itemBuilder: (context, i) {
@@ -2417,9 +2464,54 @@ class _AdminDashboardState extends State<AdminDashboard> {
               return Card(child: ListTile(title: Text('Invalid donor data')));
             }
           },
+              ),
+            ),
+          ],
         );
       },
     );
+  }
+
+  Widget _buildAllDonorsSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: TextField(
+        onChanged: (value) => setState(() => _allDonorsSearchQuery = value),
+        decoration: InputDecoration(
+          hintText: 'Search donors by name, email, phone, blood group...',
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: _allDonorsSearchQuery.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () => setState(() => _allDonorsSearchQuery = ''),
+                ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          isDense: true,
+        ),
+      ),
+    );
+  }
+
+  bool _matchesAllDonorsSearch(Map<String, dynamic> donor) {
+    final query = _allDonorsSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+
+    final haystack = [
+      donor['name'],
+      donor['email'],
+      donor['contact'],
+      donor['bloodGroup'],
+      donor['designation'],
+      donor['location'],
+    ]
+        .where((value) => value != null)
+        .map((value) => value.toString().toLowerCase())
+        .join(' ');
+
+    return haystack.contains(query);
   }
 
   Widget _inboxRecipients() {
@@ -2620,105 +2712,152 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final d = docs[i];
               final Map<String, dynamic> rd = d.data() as Map<String, dynamic>;
               return Card(
-                margin: EdgeInsets.symmetric(horizontal: 0, vertical: 6),
-                elevation: 3,
+                margin: EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+                elevation: 1,
+                color: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(color: Colors.red.withOpacity(0.2), width: 1),
+                  side: BorderSide(color: Colors.grey.shade300, width: 1),
                 ),
-                child: InkWell(
-                  onTap: () => setState(() { _selectedItem = Map<String, dynamic>.from(rd); _selectedType = 'emergency'; _selectedId = d.id; }),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.red.withOpacity(0.05), Colors.white],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header with badge
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.red[700],
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.emergency, color: Colors.white, size: 14),
-                                    SizedBox(width: 4),
-                                    Text('Emergency Request', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: (rd['urgency'] ?? 'normal') == 'critical' ? Colors.red[900] : Colors.orange[700],
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: ((rd['urgency'] ?? 'normal') == 'critical' ? Colors.red : Colors.orange).withOpacity(0.3),
-                                      blurRadius: 4,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Text((rd['urgency'] ?? 'normal').toUpperCase(), style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: 12),
-                          // Blood Group
-                          Row(
-                            children: [
-                              Icon(Icons.bloodtype, color: Colors.red[700], size: 20),
-                              SizedBox(width: 8),
-                              Text('Blood Group: ${rd['bloodGroup'] ?? 'N/A'}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red[800])),
-                            ],
-                          ),
-                          SizedBox(height: 8),
-                          // Phone Number
-                          Row(
-                            children: [
-                              Icon(Icons.phone, size: 18, color: Colors.blue[700]),
-                              SizedBox(width: 8),
-                              Expanded(child: Text('${rd['requesterPhone'] ?? 'N/A'}', style: TextStyle(fontSize: 14, color: Colors.blue[800]))),
-                            ],
-                          ),
-                          // Location
-                          if (rd['location'] != null && rd['location'].toString().isNotEmpty) ...[
-                            SizedBox(height: 8),
-                            Row(
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.location_on, size: 18, color: Colors.green[700]),
-                                SizedBox(width: 8),
-                                Expanded(child: Text('${rd['location'] ?? 'N/A'}', style: TextStyle(color: Colors.green[800], fontSize: 13))),
+                                Icon(Icons.emergency, color: Colors.red[700], size: 14),
+                                SizedBox(width: 4),
+                                Text('Emergency Request', style: TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.bold)),
                               ],
                             ),
-                          ],
-                          SizedBox(height: 8),
-                          // Status
-                          Row(
-                            children: [
-                              Icon(Icons.info_outline, size: 18, color: (rd['status'] ?? 'new') == 'handled' ? Colors.green[700] : Colors.blue[700]),
-                              SizedBox(width: 8),
-                              Text('Status: ${rd['status'] ?? 'new'}', style: TextStyle(fontSize: 13, color: (rd['status'] ?? 'new') == 'handled' ? Colors.green[800] : Colors.blue[800], fontWeight: FontWeight.w600)),
-                            ],
+                          ),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text((rd['urgency'] ?? 'normal').toUpperCase(), style: TextStyle(color: Colors.black87, fontSize: 10, fontWeight: FontWeight.bold)),
                           ),
                         ],
                       ),
-                    ),
+                      SizedBox(height: 12),
+                      
+                      // Blood Group
+                      Row(
+                        children: [
+                          Icon(Icons.bloodtype, color: Colors.red[700], size: 18),
+                          SizedBox(width: 8),
+                          Text('Blood Group: ${rd['bloodGroup'] ?? 'N/A'}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      
+                      // Phone Number
+                      Row(
+                        children: [
+                          Icon(Icons.phone, size: 16, color: Colors.black54),
+                          SizedBox(width: 8),
+                          Expanded(child: Text('Phone: ${rd['requesterPhone'] ?? 'N/A'}', style: TextStyle(fontSize: 12, color: Colors.black87))),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      
+                      // Location
+                      if (rd['location'] != null && rd['location'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.location_on, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Location: ${rd['location'] ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (rd['location'] != null && rd['location'].toString().isNotEmpty)
+                        SizedBox(height: 8),
+                      
+                      // Hospital Name
+                      if (rd['hospitalName'] != null && rd['hospitalName'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.local_hospital, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Hospital: ${rd['hospitalName'] ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (rd['hospitalName'] != null && rd['hospitalName'].toString().isNotEmpty)
+                        SizedBox(height: 8),
+                      
+                      // Requested At
+                      if (rd['requestedAt'] != null)
+                        Row(
+                          children: [
+                            Icon(Icons.access_time, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Requested: ${rd['requestedAt']?.toString().split('T')[0] ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (rd['requestedAt'] != null)
+                        SizedBox(height: 8),
+                      
+                      // Notes
+                      if (rd['notes'] != null && rd['notes'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.note, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Notes: ${rd['notes']?.toString() ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (rd['notes'] != null && rd['notes'].toString().isNotEmpty)
+                        SizedBox(height: 8),
+                      
+                      // Status
+                      Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 16, color: Colors.black54),
+                          SizedBox(width: 8),
+                          Text('Status: ${rd['status'] ?? 'new'}', style: TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      
+                      // Mark as Handled Button
+                      if (rd['status'] != 'handled')
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            try {
+                              await FirebaseFirestore.instance.collection('emergency_requests').doc(d.id).update({
+                                'status': 'handled',
+                                'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+                                'handledAt': DateTime.now().toIso8601String()
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Marked as Handled')));
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+                            }
+                          },
+                          icon: Icon(Icons.check_circle, size: 18),
+                          label: Text('Mark as Handled'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[600],
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               );
@@ -2735,110 +2874,162 @@ class _AdminDashboardState extends State<AdminDashboard> {
         final list = snap.data!;
         if (list.isEmpty) return Center(child: Text('No emergency requests (demo)'));
         return ListView.builder(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           itemCount: list.length,
           itemBuilder: (context, i) {
             try {
               final Map<String, dynamic> r = jsonDecode(list[i]);
               return Card(
-                margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                elevation: 3,
+                margin: EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+                elevation: 1,
+                color: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(color: Colors.red.withOpacity(0.2), width: 1),
+                  side: BorderSide(color: Colors.grey.shade300, width: 1),
                 ),
-                child: InkWell(
-                  onTap: () => setState(() { _selectedItem = Map<String, dynamic>.from(r); _selectedType = 'emergency'; _selectedId = i.toString(); }),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.red.withOpacity(0.05), Colors.white],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header with badge
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.red[700],
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.emergency, color: Colors.white, size: 14),
-                                    SizedBox(width: 4),
-                                    Text('Emergency Request', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: (r['urgency'] ?? 'normal') == 'critical' ? Colors.red[900] : Colors.orange[700],
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: ((r['urgency'] ?? 'normal') == 'critical' ? Colors.red : Colors.orange).withOpacity(0.3),
-                                      blurRadius: 4,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Text((r['urgency'] ?? 'normal').toUpperCase(), style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: 12),
-                          // Blood Group
-                          Row(
-                            children: [
-                              Icon(Icons.bloodtype, color: Colors.red[700], size: 20),
-                              SizedBox(width: 8),
-                              Text('Blood Group: ${r['bloodGroup'] ?? 'N/A'}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red[800])),
-                            ],
-                          ),
-                          SizedBox(height: 8),
-                          // Phone Number
-                          Row(
-                            children: [
-                              Icon(Icons.phone, size: 18, color: Colors.blue[700]),
-                              SizedBox(width: 8),
-                              Expanded(child: Text('${r['requesterPhone'] ?? 'N/A'}', style: TextStyle(fontSize: 14, color: Colors.blue[800]))),
-                            ],
-                          ),
-                          // Location
-                          if (r['location'] != null && r['location'].toString().isNotEmpty) ...[
-                            SizedBox(height: 8),
-                            Row(
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.location_on, size: 18, color: Colors.green[700]),
-                                SizedBox(width: 8),
-                                Expanded(child: Text('${r['location'] ?? 'N/A'}', style: TextStyle(color: Colors.green[800], fontSize: 13))),
+                                Icon(Icons.emergency, color: Colors.red[700], size: 14),
+                                SizedBox(width: 4),
+                                Text('Emergency Request', style: TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.bold)),
                               ],
                             ),
-                          ],
-                          SizedBox(height: 8),
-                          // Status
-                          Row(
-                            children: [
-                              Icon(Icons.info_outline, size: 18, color: (r['status'] ?? 'new') == 'handled' ? Colors.green[700] : Colors.blue[700]),
-                              SizedBox(width: 8),
-                              Text('Status: ${r['status'] ?? 'new'}', style: TextStyle(fontSize: 13, color: (r['status'] ?? 'new') == 'handled' ? Colors.green[800] : Colors.blue[800], fontWeight: FontWeight.w600)),
-                            ],
+                          ),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text((r['urgency'] ?? 'normal').toUpperCase(), style: TextStyle(color: Colors.black87, fontSize: 10, fontWeight: FontWeight.bold)),
                           ),
                         ],
                       ),
-                    ),
+                      SizedBox(height: 12),
+                      
+                      // Blood Group
+                      Row(
+                        children: [
+                          Icon(Icons.bloodtype, color: Colors.red[700], size: 18),
+                          SizedBox(width: 8),
+                          Text('Blood Group: ${r['bloodGroup'] ?? 'N/A'}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      
+                      // Phone Number
+                      Row(
+                        children: [
+                          Icon(Icons.phone, size: 16, color: Colors.black54),
+                          SizedBox(width: 8),
+                          Expanded(child: Text('Phone: ${r['requesterPhone'] ?? 'N/A'}', style: TextStyle(fontSize: 12, color: Colors.black87))),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      
+                      // Location
+                      if (r['location'] != null && r['location'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.location_on, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Location: ${r['location'] ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (r['location'] != null && r['location'].toString().isNotEmpty)
+                        SizedBox(height: 8),
+                      
+                      // Hospital Name
+                      if (r['hospitalName'] != null && r['hospitalName'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.local_hospital, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Hospital: ${r['hospitalName'] ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (r['hospitalName'] != null && r['hospitalName'].toString().isNotEmpty)
+                        SizedBox(height: 8),
+                      
+                      // Requested At
+                      if (r['requestedAt'] != null)
+                        Row(
+                          children: [
+                            Icon(Icons.access_time, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Requested: ${r['requestedAt']?.toString().split('T')[0] ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (r['requestedAt'] != null)
+                        SizedBox(height: 8),
+                      
+                      // Notes
+                      if (r['notes'] != null && r['notes'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.note, size: 16, color: Colors.black54),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('Notes: ${r['notes']?.toString() ?? 'N/A'}', style: TextStyle(color: Colors.black87, fontSize: 12))),
+                          ],
+                        ),
+                      if (r['notes'] != null && r['notes'].toString().isNotEmpty)
+                        SizedBox(height: 8),
+                      
+                      // Status
+                      Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 16, color: Colors.black54),
+                          SizedBox(width: 8),
+                          Text('Status: ${r['status'] ?? 'new'}', style: TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      
+                      // Mark as Handled Button
+                      if (r['status'] != 'handled')
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            try {
+                              final prefs = await SharedPreferences.getInstance();
+                              final data = List<String>.from(list);
+                              final Map<String, dynamic> updated = jsonDecode(data[i]);
+                              updated['status'] = 'handled';
+                              updated['handledBy'] = prefs.getString('demo_current_email') ?? 'superadmin@bloodbridge.app';
+                              updated['handledAt'] = DateTime.now().toIso8601String();
+                              data[i] = jsonEncode(updated);
+                              await prefs.setStringList('emergency_requests', data);
+                              setState(() {});
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Marked as Handled (Demo)')));
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+                            }
+                          },
+                          icon: Icon(Icons.check_circle, size: 18),
+                          label: Text('Mark as Handled'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[600],
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               );
@@ -3005,9 +3196,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
           
           // Content
           Padding(
-            padding: EdgeInsets.all(16),
+            padding: EdgeInsets.all(8),
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: 180),
+              constraints: BoxConstraints(maxHeight: 140),
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3493,93 +3684,64 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _buildDetailRow(String label, String value, IconData icon, Color color, {bool isBold = false, bool isLarge = false, bool showBadge = false, bool multiLine = false}) {
     return Container(
-      margin: EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: color.withOpacity(0.22),
-          width: 1.5,
+          color: Colors.grey.shade300,
+          width: 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 6,
-            offset: Offset(0, 3),
-          ),
-        ],
       ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: multiLine ? CrossAxisAlignment.start : CrossAxisAlignment.center,
-          children: [
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: color.withOpacity(0.8),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                    ),
+      child: Row(
+        crossAxisAlignment: multiLine ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+        children: [
+          Icon(icon, color: Colors.red[700], size: 18),
+          SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.w600,
                   ),
-                  SizedBox(height: 6),
-                  showBadge
-                      ? Container(
-                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [color, color.withOpacity(0.8)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: color.withOpacity(0.4),
-                                blurRadius: 6,
-                                offset: Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                          child: Text(
-                            value.toUpperCase(),
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                        )
-                      : Text(
+                ),
+                SizedBox(height: 2),
+                showBadge
+                    ? Container(
+                        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
                           value,
                           style: TextStyle(
-                            fontSize: isLarge ? 22 : 16,
-                            fontWeight: isBold ? FontWeight.w800 : FontWeight.w700,
-                            color: color.withOpacity(0.95),
-                            height: 1.3,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 11,
                           ),
-                          softWrap: true,
                         ),
-                ],
-              ),
+                      )
+                    : Text(
+                        value,
+                        style: TextStyle(
+                          fontSize: isLarge ? 14 : 12,
+                          fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,
+                          color: Colors.black87,
+                          height: 1.2,
+                        ),
+                        softWrap: true,
+                      ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -3755,6 +3917,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   SizedBox(height: 12),
                   TextField(
                     controller: cnicCtl,
+                    onChanged: (value) {
+                      final formatted = _formatCNIC(value);
+                      if (formatted != value) {
+                        cnicCtl.text = formatted;
+                        cnicCtl.selection = TextSelection.fromPosition(
+                          TextPosition(offset: formatted.length),
+                        );
+                      }
+                    },
                     decoration: InputDecoration(
                       labelText: 'CNIC *',
                       prefixIcon: Icon(Icons.badge),
@@ -4055,6 +4226,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   SizedBox(height: 12),
                   TextField(
                     controller: cnicCtl,
+                    onChanged: (value) {
+                      final formatted = _formatCNIC(value);
+                      if (formatted != value) {
+                        cnicCtl.text = formatted;
+                        cnicCtl.selection = TextSelection.fromPosition(
+                          TextPosition(offset: formatted.length),
+                        );
+                      }
+                    },
                     decoration: InputDecoration(
                       labelText: 'CNIC',
                       prefixIcon: Icon(Icons.badge),
@@ -7526,6 +7706,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _addBloodBank() async {
     final nameCtl = TextEditingController();
     final addressCtl = TextEditingController();
+    final locationCtl = TextEditingController();
     final phoneCtl = TextEditingController();
     final supervisorCtl = TextEditingController();
     
@@ -7557,6 +7738,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   labelText: 'Address',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.location_on),
+                ),
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: locationCtl,
+                decoration: InputDecoration(
+                  labelText: 'Location/City',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.public),
                 ),
               ),
               SizedBox(height: 12),
@@ -7604,6 +7794,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             onPressed: () async {
               final name = nameCtl.text.trim();
               final address = addressCtl.text.trim();
+              final location = locationCtl.text.trim();
               final phone = phoneCtl.text.trim();
               final supervisor = supervisorCtl.text.trim();
               
@@ -7625,6 +7816,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final newBank = {
                 'name': name,
                 'address': address,
+                'location': location,
                 'phone': phone,
                 'supervisor': supervisor,
                 'inventory': inventory,
@@ -7667,6 +7859,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _editBloodBank(Map<String, dynamic> bank) async {
     final nameCtl = TextEditingController(text: bank['name']);
     final addressCtl = TextEditingController(text: bank['address'] ?? '');
+    final locationCtl = TextEditingController(text: bank['location'] ?? '');
     final phoneCtl = TextEditingController(text: bank['phone'] ?? '');
     final supervisorCtl = TextEditingController(text: bank['supervisor'] ?? '');
     
@@ -7698,6 +7891,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   labelText: 'Address',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.location_on),
+                ),
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: locationCtl,
+                decoration: InputDecoration(
+                  labelText: 'Location/City',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.public),
                 ),
               ),
               SizedBox(height: 12),
@@ -7745,6 +7947,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             onPressed: () async {
               final name = nameCtl.text.trim();
               final address = addressCtl.text.trim();
+              final location = locationCtl.text.trim();
               final phone = phoneCtl.text.trim();
               final supervisor = supervisorCtl.text.trim();
               
@@ -7760,6 +7963,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               try {
                 bank['name'] = name;
                 bank['address'] = address;
+                bank['location'] = location;
                 bank['phone'] = phone;
                 bank['supervisor'] = supervisor;
                 
@@ -7767,6 +7971,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   await FirebaseFirestore.instance.collection('blood_banks').doc(bank['id']).update({
                     'name': name,
                     'address': address,
+                    'location': location,
                     'phone': phone,
                     'supervisor': supervisor,
                   });
