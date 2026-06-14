@@ -58,7 +58,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     if (name.isEmpty || contact.isEmpty || designation.isEmpty || age == 0 || location.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please fill all fields'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Please fill all fields'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: 16,
+            right: 16,
+            left: MediaQuery.of(context).size.width * 0.5,
+            bottom: MediaQuery.of(context).size.height - 130,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       );
       return;
     }
@@ -124,6 +135,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         SnackBar(
           content: Text('Profile updated successfully!'),
           backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: 16,
+            right: 16,
+            left: MediaQuery.of(context).size.width * 0.5,
+            bottom: MediaQuery.of(context).size.height - 130,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     } catch (e) {
@@ -132,6 +151,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         SnackBar(
           content: Text('Failed to update profile: $e'),
           backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: 16,
+            right: 16,
+            left: MediaQuery.of(context).size.width * 0.5,
+            bottom: MediaQuery.of(context).size.height - 130,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }

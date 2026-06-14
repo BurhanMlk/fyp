@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/firebase_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -20,6 +21,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   int _totalUsers = 0;
   int _donors = 0;
   int _recipients = 0;
+  int _bloodBanksCount = 0;
   // Selection for inbox details
   Map<String, dynamic>? _selectedItem;
   String? _selectedType; // 'donor_request' | 'emergency' | 'forgot' | 'registration'
@@ -35,9 +37,24 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Map<String, int> _bloodGroupDistribution = {};
   bool _isLoadingBloodData = true;
   
+  // Enhanced Analytics - Blood Group Selection
+  String? _selectedBloodGroup;
+  List<Map<String, dynamic>> _selectedBloodGroupTrends = [];
+  bool _isLoadingSelectedBloodGroupTrends = false;
+
+  // Analytics summary data
+  int? _monthlyRequestsCount;
+  double? _approvalRate;
+  double? _averageResponseHours;
+  
   // Monthly Donation Trends Data
   List<Map<String, dynamic>> _monthlyTrends = [];
   bool _isLoadingTrendsData = true;
+
+  // Verification counts
+  int _verifiedDonorsCount = 0;
+  int _verifiedRecipientsCount = 0;
+  int _pendingVerificationCount = 0;
   
   // Communication Module Data
   List<Map<String, dynamic>> _activeChats = [];
@@ -52,6 +69,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   int _newMessagesCount = 0;
   Map<String, dynamic>? _selectedMessage; // For responding to messages
   String _allDonorsSearchQuery = '';
+  String _userRegistrationSearchQuery = '';
 
   @override
   void initState() {
@@ -61,17 +79,41 @@ class _AdminDashboardState extends State<AdminDashboard> {
       if (!ok) {
         // show brief message and pop
         Future.microtask(() {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Access denied: super admin only')));
+          _showSnack('Access denied: super admin only');
           Navigator.of(context).pop();
         });
       } else {
         _loadStats();
         _loadBloodBanks();
+        _loadAnalyticsSummary();
         _loadBloodGroupDistribution();
         _loadMonthlyTrends();
         _loadCommunicationData();
+        _loadVerificationCounts();
       }
     });
+  }
+
+  void _showSnack(String message, {bool isError = false, bool isWarning = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    // All popups show in red color
+    Color bg = Colors.red.shade700;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: TextStyle(color: Colors.white)),
+        backgroundColor: bg,
+        duration: Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          top: 16,
+          right: 16,
+          left: MediaQuery.of(context).size.width * 0.4,
+          bottom: MediaQuery.of(context).size.height - 120,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   // Guard: if not super_admin, redirect back (demo & Firebase)
@@ -125,44 +167,67 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         final snap = await FirebaseFirestore.instance.collection('users').get();
         final docs = snap.docs;
-        int donors = 0, recipients = 0;
+        int donors = 0, recipients = 0, bloodBanks = 0;
         for (final d in docs) {
           final r = d.data()['role'] ?? '';
+          print('📊 User role found: "$r"');
           if (r == 'donor') {
             donors++;
-          } else if (r == 'recipient') recipients++;
+          } else if (r == 'recipient') {
+            recipients++;
+          } else if (r != 'admin' && r != 'super_admin') {
+            // Any role other than donor, recipient, admin, or super_admin is considered blood bank
+            bloodBanks++;
+            print('🏥 Blood bank user found with role: "$r"');
+          }
         }
+        print('📈 Final counts - Donors: $donors, Recipients: $recipients, Blood Banks: $bloodBanks');
         setState(() {
           _totalUsers = docs.length;
           _donors = donors;
           _recipients = recipients;
+          _bloodBanksCount = bloodBanks;
+          print('🔄 Stats updated - Blood Banks: $_bloodBanksCount');
         });
       } catch (e) {
         setState(() {
           _totalUsers = 0;
+          _bloodBanksCount = 0;
         });
       }
     } else {
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('demo_users') ?? <String>[];
       try {
-        int donors = 0, recipients = 0;
+        int donors = 0, recipients = 0, bloodBanks = 0;
         for (final s in list) {
           final Map<String, dynamic> u = jsonDecode(s);
-          if ((u['role'] ?? '') == 'donor') {
+          final role = u['role'] ?? '';
+          print('📊 Demo user role found: "$role"');
+          if (role == 'donor') {
             donors++;
-          } else if ((u['role'] ?? '') == 'recipient') recipients++;
+          } else if (role == 'recipient') {
+            recipients++;
+          } else if (role != 'admin' && role != 'super_admin') {
+            // Any role other than donor, recipient, admin, or super_admin is considered blood bank
+            bloodBanks++;
+            print('🏥 Demo blood bank user found with role: "$role"');
+          }
         }
+        print('📈 Demo final counts - Donors: $donors, Recipients: $recipients, Blood Banks: $bloodBanks');
         setState(() {
           _totalUsers = list.length;
           _donors = donors;
           _recipients = recipients;
+          _bloodBanksCount = bloodBanks;
+          print('🔄 Demo stats updated - Blood Banks: $_bloodBanksCount');
         });
       } catch (e) {
         setState(() {
           _totalUsers = 0;
           _donors = 0;
           _recipients = 0;
+          _bloodBanksCount = 0;
         });
       }
     }
@@ -217,14 +282,84 @@ class _AdminDashboardState extends State<AdminDashboard> {
     });
   }
 
+  DateTime? _parseDateValue(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is Timestamp) return value.toDate();
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _loadAnalyticsRequests() async {
+    if (FirebaseService.initialized) {
+      final snap = await FirebaseFirestore.instance.collection('donor_requests').get();
+      return snap.docs.map((doc) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        return data;
+      }).toList();
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final rawRequests = prefs.getStringList('donor_requests') ?? <String>[];
+    return rawRequests.map((reqStr) {
+      try {
+        return jsonDecode(reqStr) as Map<String, dynamic>;
+      } catch (_) {
+        return <String, dynamic>{};
+      }
+    }).where((req) => req.isNotEmpty).toList();
+  }
+
+  Future<void> _loadAnalyticsSummary() async {
+    try {
+      final requests = await _loadAnalyticsRequests();
+      final now = DateTime.now();
+      final monthStart = DateTime(now.year, now.month, 1);
+
+      int monthlyRequests = 0;
+      int handledRequests = 0;
+      double responseHoursTotal = 0;
+
+      for (final request in requests) {
+        final createdAt = _parseDateValue(request['createdAt'] ?? request['requestedAt']);
+        final handledAt = _parseDateValue(request['handledAt']);
+        final status = (request['status'] ?? '').toString().toLowerCase();
+        final isHandled = status == 'approved' || status == 'accepted' || status == 'handled' || status == 'completed';
+
+        if (createdAt != null && !createdAt.isBefore(monthStart)) {
+          monthlyRequests++;
+        }
+
+        if (isHandled) {
+          handledRequests++;
+          if (createdAt != null && handledAt != null && handledAt.isAfter(createdAt)) {
+            responseHoursTotal += handledAt.difference(createdAt).inMinutes / 60.0;
+          }
+        }
+      }
+
+      setState(() {
+        _monthlyRequestsCount = monthlyRequests;
+        _approvalRate = requests.isNotEmpty ? (handledRequests / requests.length) * 100.0 : 0.0;
+        _averageResponseHours = handledRequests > 0 ? responseHoursTotal / handledRequests : 0.0;
+      });
+    } catch (e) {
+      print('Error loading analytics summary: $e');
+    }
+  }
+
   Future<void> _loadMonthlyTrends() async {
     setState(() => _isLoadingTrendsData = true);
     
-    // Get last 6 months
+    // Get last 12 months
     final now = DateTime.now();
     List<Map<String, dynamic>> trends = [];
     
-    for (int i = 5; i >= 0; i--) {
+    for (int i = 11; i >= 0; i--) {
       final month = DateTime(now.year, now.month - i, 1);
       final monthName = _getMonthName(month.month);
       trends.add({
@@ -234,31 +369,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
       });
     }
 
-    if (FirebaseService.initialized) {
-      try {
-        // In a real app, you'd have a donations collection
-        // For now, we'll generate sample data based on user count
-        // You can replace this with actual donation records from Firestore
-        
-        final usersSnap = await FirebaseFirestore.instance.collection('users').get();
-        final userCount = usersSnap.docs.length;
-        
-        // Simulate donation trends (replace with actual donation data)
+    try {
+      final requests = await _loadAnalyticsRequests();
+
+      for (final request in requests) {
+        final createdAt = _parseDateValue(request['createdAt'] ?? request['requestedAt']);
+        if (createdAt == null) continue;
+
         for (int i = 0; i < trends.length; i++) {
-          // Generate realistic donation numbers based on user count
-          final baseValue = (userCount * 0.3).toInt(); // 30% of users donate monthly
-          final variation = (baseValue * 0.2 * (i % 3 - 1)).toInt(); // Add variation
-          trends[i]['donations'] = (baseValue + variation).clamp(0, userCount);
+          final trendDate = trends[i]['date'] as DateTime;
+          if (trendDate.year == createdAt.year && trendDate.month == createdAt.month) {
+            trends[i]['donations'] = (trends[i]['donations'] as int) + 1;
+            break;
+          }
         }
-      } catch (e) {
-        print('Error loading monthly trends: $e');
       }
-    } else {
-      // Demo mode - generate sample data
-      final sampleValues = [85, 92, 78, 95, 110, 127];
-      for (int i = 0; i < trends.length; i++) {
-        trends[i]['donations'] = sampleValues[i];
-      }
+    } catch (e) {
+      print('Error loading monthly trends: $e');
     }
 
     setState(() {
@@ -270,6 +397,51 @@ class _AdminDashboardState extends State<AdminDashboard> {
   String _getMonthName(int month) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return months[month - 1];
+  }
+
+  Future<void> _loadBloodGroupTrends(String bloodGroup) async {
+    setState(() => _isLoadingSelectedBloodGroupTrends = true);
+    
+    // Get last 12 months
+    final now = DateTime.now();
+    List<Map<String, dynamic>> trends = [];
+    
+    for (int i = 11; i >= 0; i--) {
+      final month = DateTime(now.year, now.month - i, 1);
+      final monthName = _getMonthName(month.month);
+      trends.add({
+        'month': monthName,
+        'donations': 0,
+        'date': month,
+      });
+    }
+
+    try {
+      final requests = await _loadAnalyticsRequests();
+
+      for (final request in requests) {
+        final createdAt = _parseDateValue(request['createdAt'] ?? request['requestedAt']);
+        final donorBloodGroup = request['donorBloodGroup'] as String?;
+        
+        if (createdAt == null || donorBloodGroup == null) continue;
+        if (donorBloodGroup != bloodGroup) continue;
+
+        for (int i = 0; i < trends.length; i++) {
+          final trendDate = trends[i]['date'] as DateTime;
+          if (trendDate.year == createdAt.year && trendDate.month == createdAt.month) {
+            trends[i]['donations'] = (trends[i]['donations'] as int) + 1;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      print('Error loading blood group trends: $e');
+    }
+
+    setState(() {
+      _selectedBloodGroupTrends = trends;
+      _isLoadingSelectedBloodGroupTrends = false;
+    });
   }
 
   Future<void> _loadCommunicationData() async {
@@ -351,85 +523,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
       final now = DateTime.now();
       
       // Sample active chats
-      chats = [
-        {
-          'id': '1',
-          'participants': ['Ahmad Khan', 'City Hospital'],
-          'lastMessage': 'I can donate tomorrow morning...',
-          'lastMessageAt': now.subtract(Duration(minutes: 15)),
-          'unreadCount': 2,
-        },
-        {
-          'id': '2',
-          'participants': ['Sara Ali', 'Blood Bank'],
-          'lastMessage': 'What documents are needed?',
-          'lastMessageAt': now.subtract(Duration(hours: 1)),
-          'unreadCount': 0,
-        },
-        {
-          'id': '3',
-          'participants': ['Usman Ahmed', 'Medical Center'],
-          'lastMessage': 'Confirmed for 3 PM',
-          'lastMessageAt': now.subtract(Duration(hours: 24)),
-          'unreadCount': 1,
-        },
-      ];
+      // No dummy chats - start with empty list
+      chats = [];
 
-      // Sample messages today
-      messages = [
-        {
-          'id': '1',
-          'from': 'Ahmad Khan',
-          'to': 'City Hospital',
-          'message': 'I can donate tomorrow morning at 10 AM',
-          'sentAt': now.subtract(Duration(minutes: 15)),
-          'type': 'text',
-        },
-        {
-          'id': '2',
-          'from': 'Sara Ali',
-          'to': 'Blood Bank',
-          'message': 'What documents are needed for donation?',
-          'sentAt': now.subtract(Duration(hours: 1)),
-          'type': 'text',
-        },
-        {
-          'id': '3',
-          'from': 'City Hospital',
-          'to': 'Ahmad Khan',
-          'message': 'Thank you! Please bring your ID card',
-          'sentAt': now.subtract(Duration(minutes: 10)),
-          'type': 'text',
-        },
-      ];
+      // No dummy messages - start with empty list
+      messages = [];
 
       // Sample broadcasts
-      broadcasts = [
-        {
-          'id': '1',
-          'message': 'Blood donation camp this weekend at City Hospital!',
-          'target': 'all',
-          'sentAt': now.subtract(Duration(days: 1)),
-          'sentBy': 'Admin',
-          'recipientCount': 150,
-        },
-        {
-          'id': '2',
-          'message': 'Urgent: O- blood needed for emergency patient',
-          'target': 'donors',
-          'sentAt': now.subtract(Duration(days: 2)),
-          'sentBy': 'Admin',
-          'recipientCount': 45,
-        },
-        {
-          'id': '3',
-          'message': 'Thank you to all donors who participated last month!',
-          'target': 'donors',
-          'sentAt': now.subtract(Duration(days: 7)),
-          'sentBy': 'Admin',
-          'recipientCount': 98,
-        },
-      ];
+      // No dummy broadcasts - start with empty list
+      broadcasts = [];
     }
 
     setState(() {
@@ -511,9 +613,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final message = _broadcastMessageController.text.trim();
     
     if (message.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please enter a message'), backgroundColor: Colors.orange),
-      );
+      _showSnack('Please enter a message', isWarning: true);
       return;
     }
 
@@ -581,9 +681,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           }, SetOptions(merge: true));
         }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sending broadcast: $e'), backgroundColor: Colors.red),
-        );
+        _showSnack('Error sending broadcast: $e', isError: true);
         return;
       }
     } else {
@@ -618,13 +716,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           : _selectedBroadcastTarget == 'donors' 
               ? 'donors' 
               : 'recipients';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Broadcast sent to $recipientCount $targetText!'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 3),
-        ),
-      );
+      _showSnack('Broadcast sent to $recipientCount $targetText!');
     }
   }
 
@@ -635,9 +727,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Future<void> _sendResponseMessage(String recipientEmail, String message) async {
     if (message.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please enter a message'), backgroundColor: Colors.orange),
-      );
+      _showSnack('Please enter a message', isWarning: true);
       return;
     }
 
@@ -692,19 +782,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
           'updatedAt': timestamp,
         }, SetOptions(merge: true));
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Response sent successfully!'), backgroundColor: Colors.green),
-        );
+        _showSnack('Response sent successfully!');
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sending response: $e'), backgroundColor: Colors.red),
-        );
+        _showSnack('Error sending response: $e', isError: true);
       }
     } else {
       // Demo mode - just show success
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Response sent successfully! (Demo mode)'), backgroundColor: Colors.green),
-      );
+      _showSnack('Response sent successfully! (Demo mode)');
     }
     
     await _loadCommunicationData();
@@ -721,12 +805,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ),
         title: Row(
           children: [
-            Icon(Icons.warning, color: Colors.red),
+            Icon(Icons.warning, color: Colors.red, size: 24),
             SizedBox(width: 8),
-            Text('Delete All Messages'),
+            Expanded(
+              child: Text(
+                'Delete All Messages',
+                style: TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
           ],
         ),
-        content: Text('Are you sure you want to delete ALL messages from today? This action cannot be undone.'),
+        content: SizedBox(
+          width: 300,
+          child: Text(
+            'Are you sure you want to delete ALL messages from today? This action cannot be undone.',
+            style: TextStyle(fontSize: 14),
+          ),
+        ),
         actions: [
           OutlinedButton(
             onPressed: () => Navigator.pop(context),
@@ -735,31 +832,56 @@ class _AdminDashboardState extends State<AdminDashboard> {
               foregroundColor: Colors.black,
               side: BorderSide(color: Colors.black, width: 2),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
-            child: Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(fontSize: 14)),
           ),
           OutlinedButton.icon(
-            icon: Icon(Icons.delete_sweep),
-            label: Text('Delete All'),
+            icon: Icon(Icons.delete_sweep, size: 18),
+            label: Text('Delete All', style: TextStyle(fontSize: 14)),
             style: OutlinedButton.styleFrom(
               backgroundColor: Colors.transparent,
               foregroundColor: Colors.red,
               side: BorderSide(color: Colors.red, width: 2),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
             onPressed: () async {
+              Navigator.pop(context); // Close dialog first
+              
+              // Show loading indicator
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => Center(
+                  child: Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 16),
+                          Text('Deleting messages...'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+              
+              // Delete messages
               await _deleteAllMessages();
+              
+              // Close loading dialog
               if (mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('All messages deleted successfully'), backgroundColor: Colors.green),
-                );
+                _showSnack('✅ All messages deleted successfully!');
               }
             },
           ),
         ],
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 12),
       ),
     );
   }
@@ -768,30 +890,42 @@ class _AdminDashboardState extends State<AdminDashboard> {
     if (FirebaseService.initialized) {
       try {
         final today = DateTime.now();
-        final startOfDay = DateTime(today.year, today.month, today.day);
-        
+        final startOfDay = Timestamp.fromDate(
+            DateTime(today.year, today.month, today.day));
+
+        // Get all messages from today
         final messagesSnap = await FirebaseFirestore.instance
             .collection('messages')
             .where('sentAt', isGreaterThanOrEqualTo: startOfDay)
             .get();
-        
-        // Soft delete - mark as deleted instead of removing
-        for (final doc in messagesSnap.docs) {
-          await doc.reference.update({'deleted': true, 'deletedAt': Timestamp.now()});
+
+        if (messagesSnap.docs.isEmpty) {
+          _showSnack('No messages to delete', isWarning: true);
+          return;
         }
+
+        // Hard delete — actually remove documents using batch
+        final batch = FirebaseFirestore.instance.batch();
+        for (final doc in messagesSnap.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+
+        print('Deleted ${messagesSnap.docs.length} messages');
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        print('Error deleting messages: $e');
+        _showSnack('Error: $e', isError: true);
+        return;
       }
     } else {
-      // Demo mode - mark messages as deleted
-      for (var msg in _messagesToday) {
-        msg['deleted'] = true;
-      }
+      // Demo mode - clear today's messages
+      setState(() {
+        _messagesToday.clear();
+      });
     }
+    
+    // Reload communication data to refresh the UI
     await _loadCommunicationData();
-    setState(() {}); // Force rebuild
   }
 
   void _showEditMessageDialog(Map<String, dynamic> message) {
@@ -862,17 +996,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
             onPressed: () async {
               final updatedText = messageCtl.text.trim();
               if (updatedText.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Message cannot be empty'), backgroundColor: Colors.orange),
-                );
+                _showSnack('Message cannot be empty', isWarning: true);
                 return;
               }
               await _updateMessage(message['id'], updatedText);
               if (mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Message updated successfully'), backgroundColor: Colors.green),
-                );
+                _showSnack('Message updated successfully');
               }
             },
           ),
@@ -889,9 +1019,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             .doc(messageId)
             .update({'message': newText});
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        _showSnack('Error: $e', isError: true);
       }
     } else {
       // Demo mode - update in local list
@@ -948,9 +1076,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               await _deleteMessage(message['id']);
               if (mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Message deleted successfully'), backgroundColor: Colors.green),
-                );
+                _showSnack('Message deleted successfully');
               }
             },
           ),
@@ -962,25 +1088,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _deleteMessage(String messageId) async {
     if (FirebaseService.initialized) {
       try {
-        // Soft delete - mark as deleted instead of removing
+        // Hard delete — actually remove the document
         await FirebaseFirestore.instance
             .collection('messages')
             .doc(messageId)
-            .update({'deleted': true, 'deletedAt': Timestamp.now()});
+            .delete();
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } else {
-      // Demo mode - mark as deleted
-      final msgIndex = _messagesToday.indexWhere((m) => m['id'] == messageId);
-      if (msgIndex != -1) {
-        _messagesToday[msgIndex]['deleted'] = true;
+        _showSnack('Error: $e', isError: true);
       }
     }
     await _loadCommunicationData();
-    setState(() {}); // Force rebuild
+    setState(() {});
   }
 
   void _confirmDeleteAllDonors() {
@@ -1026,9 +1144,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               await _deleteAllDonors();
               if (mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('All donors deleted'), backgroundColor: Colors.orange),
-                );
+                _showSnack('All donors deleted', isWarning: true);
               }
             },
           ),
@@ -1051,10 +1167,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
         
         // Reload stats
         _loadStats();
+        _loadVerificationCounts();
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        _showSnack('Error: $e', isError: true);
       }
     } else {
       // Demo mode - remove all donors from the list
@@ -1072,6 +1187,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       
       // Reload stats
       _loadStats();
+      _loadVerificationCounts();
     }
     setState(() {
       // Trigger rebuild
@@ -1121,9 +1237,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               await _deleteAllRecipients();
               if (mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('All recipients deleted'), backgroundColor: Colors.orange),
-                );
+                _showSnack('All recipients deleted', isWarning: true);
               }
             },
           ),
@@ -1146,10 +1260,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
         
         // Reload stats
         _loadStats();
+        _loadVerificationCounts();
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        _showSnack('Error: $e', isError: true);
       }
     } else {
       // Demo mode - remove all recipients from the list
@@ -1167,6 +1280,104 @@ class _AdminDashboardState extends State<AdminDashboard> {
       
       // Reload stats
       _loadStats();
+      _loadVerificationCounts();
+    }
+    setState(() {
+      // Trigger rebuild
+    });
+  }
+
+  void _confirmDeleteAllBloodBanks() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete All Blood Banks'),
+          ],
+        ),
+        content: Text('Are you sure you want to delete ALL blood banks? This action cannot be undone and will permanently remove all blood bank accounts from the system.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete_sweep),
+            label: Text('Delete All'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              await _deleteAllBloodBanks();
+              if (mounted) {
+                Navigator.pop(context);
+                _showSnack('All blood banks deleted', isWarning: true);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteAllBloodBanks() async {
+    if (FirebaseService.initialized) {
+      try {
+        final bloodBanksSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .get();
+        
+        for (final doc in bloodBanksSnap.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          final role = data['role'] ?? '';
+          if (role != 'donor' && role != 'recipient' && role != 'admin' && role != 'super_admin') {
+            await doc.reference.delete();
+          }
+        }
+        
+        // Reload stats
+        _loadStats();
+        _loadVerificationCounts();
+      } catch (e) {
+        _showSnack('Error: $e', isError: true);
+      }
+    } else {
+      // Demo mode - remove all blood banks from the list
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('demo_users') ?? <String>[];
+      final nonBloodBanks = list.where((s) {
+        try {
+          final Map<String, dynamic> u = jsonDecode(s);
+          final role = u['role'] ?? '';
+          return role == 'donor' || role == 'recipient' || role == 'admin' || role == 'super_admin';
+        } catch (_) {
+          return true;
+        }
+      }).toList();
+      await prefs.setStringList('demo_users', nonBloodBanks);
+      
+      // Reload stats
+      _loadStats();
+      _loadVerificationCounts();
     }
     setState(() {
       // Trigger rebuild
@@ -1298,6 +1509,47 @@ class _AdminDashboardState extends State<AdminDashboard> {
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Text('ADMIN INBOX', style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.bold)),
+          ),
+          // Quick Access: All Donors
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Icon(Icons.bloodtype, size: 20, color: _currentModule == 'all_donors' ? Color(0xFFD32F2F) : Colors.grey),
+            title: Text('All Donors', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'all_donors' ? FontWeight.bold : FontWeight.normal)),
+            selected: _currentModule == 'all_donors',
+            onTap: () {
+              setState(() => _currentModule = 'all_donors');
+              Navigator.pop(context);
+            },
+          ),
+          // Quick Access: All Recipients
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Icon(Icons.local_hospital, size: 20, color: _currentModule == 'recipients' ? Color(0xFFD32F2F) : Colors.grey),
+            title: Text('All Recipients', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'recipients' ? FontWeight.bold : FontWeight.normal)),
+            selected: _currentModule == 'recipients',
+            onTap: () {
+              setState(() => _currentModule = 'recipients');
+              Navigator.pop(context);
+            },
+          ),
+          // Quick Access: Blood Banks
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Icon(Icons.business, size: 20, color: _currentModule == 'blood_banks' ? Color(0xFFD32F2F) : Colors.grey),
+            title: Text('Blood Banks', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'blood_banks' ? FontWeight.bold : FontWeight.normal)),
+            selected: _currentModule == 'blood_banks',
+            onTap: () {
+              setState(() => _currentModule = 'blood_banks');
+              Navigator.pop(context);
+            },
+          ),
+          Divider(height: 1),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Text('MODULES', style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.bold)),
           ),
           // M1: User Registration & Profile Management
           ListTile(
@@ -1456,6 +1708,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         return _buildModulePage('All Donors', _inboxAllDonors());
       case 'recipients':
         return _buildModulePage('Recipients', _inboxRecipients());
+      case 'blood_banks':
+        return _buildModulePage('Blood Banks', _inboxBloodBanks());
       case 'emergency':
         return _buildModulePage('Emergency Requests', _inboxEmergencyRequests());
       case 'admin_profile':
@@ -1514,6 +1768,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       setState(() => _currentModule = 'recipients');
                     },
                     child: _statCard('Recipients', _recipients.toString(), Colors.green, Icons.local_hospital),
+                  ),
+                ),
+                SizedBox(
+                  width: 130,
+                  child: InkWell(
+                    onTap: () {
+                      setState(() => _currentModule = 'blood_banks');
+                    },
+                    child: _statCard('Blood Banks', _bloodBanksCount.toString(), Colors.orange, Icons.business),
                   ),
                 ),
               ],
@@ -1720,6 +1983,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   tooltip: 'Delete All Recipients',
                   onPressed: () => _confirmDeleteAllRecipients(),
                 ),
+              // Delete All Blood Banks button (only for blood_banks view)
+              if (_currentModule == 'blood_banks')
+                IconButton(
+                  icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
+                  tooltip: 'Delete All Blood Banks',
+                  onPressed: () => _confirmDeleteAllBloodBanks(),
+                ),
             ],
           ),
         ),
@@ -1776,10 +2046,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
     if (FirebaseService.initialized) {
       // Firebase path
       return FutureBuilder<QuerySnapshot>(
-        future: FirebaseFirestore.instance.collection('users').orderBy('createdAt', descending: true).get(),
+        future: FirebaseFirestore.instance.collection('users').get(),
         builder: (context, snap) {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
-          final docs = snap.data!.docs;
+          final docs = snap.data!.docs.toList()
+            ..sort((a, b) {
+              final aData = a.data() as Map<String, dynamic>;
+              final bData = b.data() as Map<String, dynamic>;
+              final aCreated = aData['createdAt'];
+              final bCreated = bData['createdAt'];
+              if (aCreated is Timestamp && bCreated is Timestamp) {
+                return bCreated.compareTo(aCreated);
+              }
+              return 0;
+            });
           if (docs.isEmpty) return Center(child: Text('No users found'));
           return Column(
             children: [
@@ -1999,9 +2279,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
     try {
       final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
       await docRef.update({'role': makeSuper ? 'super_admin' : 'recipient'});
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(makeSuper ? 'Granted super admin' : 'Revoked super admin')));
+      _showSnack(makeSuper ? 'Granted super admin' : 'Revoked super admin');
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      _showSnack('Failed: $e');
     }
   }
 
@@ -2014,17 +2294,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
       u['role'] = makeSuper ? 'super_admin' : 'recipient';
       list[index] = jsonEncode(u);
       await prefs.setStringList('demo_users', list);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(makeSuper ? 'Granted super admin (demo)' : 'Revoked super admin (demo)')));
+      _showSnack(makeSuper ? 'Granted super admin (demo)' : 'Revoked super admin (demo)');
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      _showSnack('Failed: $e');
     }
   }
 
   // --- Inbox list builders ------------------------------------------------
   Widget _inboxDonorRequests() {
     if (FirebaseService.initialized) {
-      return FutureBuilder<QuerySnapshot>(
-        future: FirebaseFirestore.instance.collection('donor_requests').orderBy('requestedAt', descending: true).get(),
+      return StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('donor_requests').orderBy('requestedAt', descending: true).snapshots(),
         builder: (context, snap) {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
           final docs = snap.data!.docs;
@@ -2159,11 +2439,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _inboxAllDonors() {
     if (FirebaseService.initialized) {
-      return FutureBuilder<QuerySnapshot>(
-        future: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'donor').get(),
+      return StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').snapshots(),
         builder: (context, snap) {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
-          final docs = snap.data!.docs;
+          final docs = snap.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return (data['role'] ?? '').toString().toLowerCase() == 'donor';
+          }).toList();
           final filteredDocs = docs.where((doc) {
             final data = doc.data() as Map<String, dynamic>;
             return _matchesAllDonorsSearch(data);
@@ -2260,10 +2543,46 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ],
                       ),
                       SizedBox(height: 12),
-                      // Edit and Delete buttons
+                      // Approve, Edit and Delete buttons
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
+                          // Show Approve button only if donor is not approved
+                          if (!approved) ...[
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                // Approve the donor
+                                try {
+                                  await FirebaseFirestore.instance.collection('users').doc(d.id).update({
+                                    'approved': true,
+                                    'verified': true,
+                                    'verificationStatus': 'approved',
+                                    'approvedAt': FieldValue.serverTimestamp(),
+                                    'approvedBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+                                  });
+                                  if (mounted) {
+                                    _showSnack('✅ Donor approved successfully!');
+                                    setState(() {});
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    _showSnack('Error approving donor: $e', isError: true);
+                                  }
+                                }
+                              },
+                              icon: Icon(Icons.check_circle, size: 16),
+                              label: Text('Approve'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.green[700],
+                                side: BorderSide(color: Colors.green[300]!),
+                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                          ],
                           OutlinedButton.icon(
                             onPressed: () => _showEditUserDialog(rd, d.id, true),
                             icon: Icon(Icons.edit, size: 16),
@@ -2514,13 +2833,36 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return haystack.contains(query);
   }
 
+  bool _matchesUserRegistrationSearch(Map<String, dynamic> user) {
+    final query = _userRegistrationSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+
+    final haystack = [
+      user['name'],
+      user['email'],
+      user['phone'],
+      user['role'],
+      user['bloodGroup'],
+      user['cnic'],
+      user['location'],
+    ]
+        .where((value) => value != null)
+        .map((value) => value.toString().toLowerCase())
+        .join(' ');
+
+    return haystack.contains(query);
+  }
+
   Widget _inboxRecipients() {
     if (FirebaseService.initialized) {
-      return FutureBuilder<QuerySnapshot>(
-        future: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'recipient').get(),
+      return StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').snapshots(),
         builder: (context, snap) {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
-          final docs = snap.data!.docs;
+          final docs = snap.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return (data['role'] ?? '').toString().toLowerCase() == 'recipient';
+          }).toList();
           if (docs.isEmpty) return Center(child: Text('No recipients found'));
           return ListView.builder(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -2694,7 +3036,580 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
     }
 
-    return Center(child: Text('Recipients not available'));
+    // Demo mode - load from SharedPreferences
+    return FutureBuilder<List<String>>(
+      future: SharedPreferences.getInstance().then((p) => p.getStringList('demo_users') ?? <String>[]),
+      builder: (context, snap) {
+        if (!snap.hasData) return Center(child: BloodBridgeLoader());
+        final list = snap.data!;
+        final recipients = list.where((s) {
+          try {
+            final Map<String, dynamic> u = jsonDecode(s);
+            return (u['role'] ?? '') == 'recipient';
+          } catch (_) {
+            return false;
+          }
+        }).toList();
+        if (recipients.isEmpty) {
+          return Center(child: Text('No recipients found'));
+        }
+        return ListView.builder(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          itemCount: recipients.length,
+          itemBuilder: (context, i) {
+            try {
+              final Map<String, dynamic> rd = jsonDecode(recipients[i]);
+              return Card(
+                elevation: 3,
+                margin: EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.add, color: Colors.white, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      '${rd['bloodGroup'] ?? 'N/A'}',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.green),
+                            ),
+                            child: Text(
+                              'NORMAL',
+                              style: TextStyle(
+                                color: Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      Text(
+                        '${rd['name'] ?? 'Unknown'}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Text(
+                            '${rd['location'] ?? 'N/A'}',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                          ),
+                        ],
+                      ),
+                      Divider(height: 20),
+                      Row(
+                        children: [
+                          Icon(Icons.work, size: 16, color: Colors.grey[700]),
+                          SizedBox(width: 8),
+                          Text(
+                            '${rd['designation'] ?? 'Medical Emergency'}',
+                            style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.email, size: 14, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              '${rd['email'] ?? 'N/A'}',
+                              style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.phone, size: 14, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Text(
+                            '${rd['contact'] ?? 'N/A'}',
+                            style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _showEditUserDialog(rd, i.toString(), true),
+                            icon: Icon(Icons.edit, size: 16),
+                            label: Text('Edit'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue[700],
+                              side: BorderSide(color: Colors.blue[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _confirmDeleteUser(rd, i.toString(), true),
+                            icon: Icon(Icons.delete, size: 16),
+                            label: Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red[700],
+                              side: BorderSide(color: Colors.red[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            } catch (e) {
+              return SizedBox.shrink();
+            }
+          },
+        );
+      },
+    );
+  }
+
+  Widget _inboxBloodBanks() {
+    if (FirebaseService.initialized) {
+      return StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').snapshots(),
+        builder: (context, snap) {
+          if (!snap.hasData) return Center(child: BloodBridgeLoader());
+          final docs = snap.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final role = data['role'] ?? '';
+            return role != 'donor' && role != 'recipient' && role != 'admin' && role != 'super_admin';
+          }).toList();
+          if (docs.isEmpty) return Center(child: Text('No blood banks found'));
+          return ListView.builder(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            itemCount: docs.length,
+            itemBuilder: (context, i) {
+              try {
+              final d = docs[i];
+              final Map<String, dynamic> bd = d.data() as Map<String, dynamic>;
+              return Card(
+                elevation: 3,
+                margin: EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.business, color: Colors.white, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      '${bd['role']?.toUpperCase() ?? 'BLOOD BANK'}',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.orange),
+                            ),
+                            child: Text(
+                              'ORGANIZATION',
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      Text(
+                        '${bd['name'] ?? 'Unknown'}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                      ),
+                      ),
+                      SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '${bd['location'] ?? 'N/A'}',
+                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Divider(height: 20),
+                      Row(
+                        children: [
+                          Icon(Icons.work, size: 16, color: Colors.grey[700]),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              '${bd['designation'] ?? 'Blood Bank / Hospital'}',
+                              style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(Icons.phone, size: 16, color: Colors.grey[700]),
+                                SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    '${bd['contact'] ?? 'N/A'}',
+                                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(width: 16),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(Icons.email, size: 16, color: Colors.grey[700]),
+                                SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    '${bd['email'] ?? 'N/A'}',
+                                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      // Edit and Delete buttons
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _showEditUserDialog(bd, d.id, false),
+                            icon: Icon(Icons.edit, size: 16),
+                            label: Text('Edit'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue[700],
+                              side: BorderSide(color: Colors.blue[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _confirmDeleteUser(bd, d.id, false),
+                            icon: Icon(Icons.delete, size: 16),
+                            label: Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red[700],
+                              side: BorderSide(color: Colors.red[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            } catch (e) {
+              return SizedBox.shrink();
+            }
+          },
+        );
+      },
+    );
+    }
+
+    // Demo mode - load from SharedPreferences
+    return FutureBuilder<List<String>>(
+      future: SharedPreferences.getInstance().then((p) => p.getStringList('demo_users') ?? <String>[]),
+      builder: (context, snap) {
+        if (!snap.hasData) return Center(child: BloodBridgeLoader());
+        final list = snap.data!;
+        final bloodBanks = list.where((s) {
+          try {
+            final Map<String, dynamic> u = jsonDecode(s);
+            final role = u['role'] ?? '';
+            return role != 'donor' && role != 'recipient' && role != 'admin' && role != 'super_admin';
+          } catch (_) {
+            return false;
+          }
+        }).toList();
+        if (bloodBanks.isEmpty) {
+          return Center(child: Text('No blood banks found'));
+        }
+        return ListView.builder(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          itemCount: bloodBanks.length,
+          itemBuilder: (context, i) {
+            try {
+              final Map<String, dynamic> bd = jsonDecode(bloodBanks[i]);
+              return Card(
+                elevation: 3,
+                margin: EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.business, color: Colors.white, size: 14),
+                                SizedBox(width: 4),
+                                Text(
+                                  '${bd['role']?.toUpperCase() ?? 'BLOOD BANK'}',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.orange),
+                            ),
+                            child: Text(
+                              'ORGANIZATION',
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      Text(
+                        '${bd['name'] ?? 'Unknown'}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '${bd['location'] ?? 'N/A'}',
+                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Divider(height: 20),
+                      Row(
+                        children: [
+                          Icon(Icons.work, size: 16, color: Colors.grey[700]),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              '${bd['designation'] ?? 'Blood Bank / Hospital'}',
+                              style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(Icons.phone, size: 16, color: Colors.grey[700]),
+                                SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    '${bd['contact'] ?? 'N/A'}',
+                                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(width: 16),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(Icons.email, size: 16, color: Colors.grey[700]),
+                                SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    '${bd['email'] ?? 'N/A'}',
+                                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 12),
+                      // Edit and Delete buttons (for demo mode)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              // Edit functionality for demo mode can be added here
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Edit functionality for demo mode')),
+                              );
+                            },
+                            icon: Icon(Icons.edit, size: 16),
+                            label: Text('Edit'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.blue[700],
+                              side: BorderSide(color: Colors.blue[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              // Delete functionality for demo mode can be added here
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Delete functionality for demo mode')),
+                              );
+                            },
+                            icon: Icon(Icons.delete, size: 16),
+                            label: Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red[700],
+                              side: BorderSide(color: Colors.red[300]!),
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            } catch (e) {
+              return SizedBox.shrink();
+            }
+          },
+        );
+      },
+    );
   }
 
   Widget _inboxEmergencyRequests() {
@@ -2833,30 +3748,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       ),
                       SizedBox(height: 12),
                       
-                      // Mark as Handled Button
-                      if (rd['status'] != 'handled')
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            try {
-                              await FirebaseFirestore.instance.collection('emergency_requests').doc(d.id).update({
-                                'status': 'handled',
-                                'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
-                                'handledAt': DateTime.now().toIso8601String()
-                              });
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Marked as Handled')));
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
-                            }
-                          },
-                          icon: Icon(Icons.check_circle, size: 18),
-                          label: Text('Mark as Handled'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green[600],
-                            foregroundColor: Colors.white,
-                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
+                      const SizedBox(height: 8),
+
+                      _buildEmergencyActions(
+                        request: rd,
+                        isFirebase: true,
+                        isHandled: rd['status'] == 'handled',
+                        docId: d.id,
+                      ),
                     ],
                   ),
                 ),
@@ -3001,34 +3900,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       ),
                       SizedBox(height: 12),
                       
-                      // Mark as Handled Button
-                      if (r['status'] != 'handled')
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            try {
-                              final prefs = await SharedPreferences.getInstance();
-                              final data = List<String>.from(list);
-                              final Map<String, dynamic> updated = jsonDecode(data[i]);
-                              updated['status'] = 'handled';
-                              updated['handledBy'] = prefs.getString('demo_current_email') ?? 'superadmin@bloodbridge.app';
-                              updated['handledAt'] = DateTime.now().toIso8601String();
-                              data[i] = jsonEncode(updated);
-                              await prefs.setStringList('emergency_requests', data);
-                              setState(() {});
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Marked as Handled (Demo)')));
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
-                            }
-                          },
-                          icon: Icon(Icons.check_circle, size: 18),
-                          label: Text('Mark as Handled'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green[600],
-                            foregroundColor: Colors.white,
-                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
+                      const SizedBox(height: 8),
+
+                      _buildEmergencyActions(
+                        request: r,
+                        isFirebase: false,
+                        isHandled: r['status'] == 'handled',
+                        demoIndex: i,
+                      ),
                     ],
                   ),
                 ),
@@ -3335,8 +4214,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         await FirebaseFirestore.instance.collection('donor_requests').doc(_selectedId).update({'status': 'approved', 'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin', 'handledAt': DateTime.now().toIso8601String(), 'sharedData': _selectedItem});
         await _markFirstDonationApproved(_selectedItem!);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Approved')));
-      } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+        _showSnack('Approved');
+      } catch (e) { _showSnack('Failed: $e'); }
     } else {
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('donor_requests') ?? <String>[];
@@ -3351,7 +4230,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       await prefs.setStringList('donor_requests', list);
       await _markFirstDonationApproved(r);
       setState(() { _selectedItem = Map<String, dynamic>.from(r); });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Approved (demo)')));
+      _showSnack('Approved (demo)');
     }
   }
 
@@ -3476,8 +4355,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
     if (FirebaseService.initialized) {
       try {
         await FirebaseFirestore.instance.collection('emergency_requests').doc(_selectedId).update({'status': 'handled', 'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin', 'handledAt': DateTime.now().toIso8601String()});
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Marked handled')));
-      } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'))); }
+        _showSnack('Marked handled');
+      } catch (e) { _showSnack('Failed: $e'); }
     } else {
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('emergency_requests') ?? <String>[];
@@ -3490,7 +4369,196 @@ class _AdminDashboardState extends State<AdminDashboard> {
       list[idx] = jsonEncode(r);
       await prefs.setStringList('emergency_requests', list);
       setState(() { _selectedItem = Map<String, dynamic>.from(r); });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Marked handled (demo)')));
+      _showSnack('Marked handled (demo)');
+    }
+  }
+
+  Widget _buildEmergencyActions({
+    required Map<String, dynamic> request,
+    required bool isFirebase,
+    required bool isHandled,
+    String? docId,
+    int? demoIndex,
+  }) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end,
+      children: [
+        if (!isHandled)
+          ElevatedButton.icon(
+            onPressed: () async {
+              if (isFirebase) {
+                try {
+                  await FirebaseFirestore.instance.collection('emergency_requests').doc(docId).update({
+                    'status': 'handled',
+                    'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+                    'handledAt': DateTime.now().toIso8601String(),
+                  });
+                  _showSnack('Marked as Handled');
+                } catch (e) {
+                  _showSnack('Failed: $e');
+                }
+              } else {
+                final prefs = await SharedPreferences.getInstance();
+                final list = prefs.getStringList('emergency_requests') ?? <String>[];
+                if (demoIndex == null || demoIndex < 0 || demoIndex >= list.length) return;
+                final Map<String, dynamic> updated = jsonDecode(list[demoIndex]);
+                updated['status'] = 'handled';
+                updated['handledBy'] = prefs.getString('demo_current_email') ?? 'superadmin@bloodbridge.app';
+                updated['handledAt'] = DateTime.now().toIso8601String();
+                list[demoIndex] = jsonEncode(updated);
+                await prefs.setStringList('emergency_requests', list);
+                setState(() {});
+                _showSnack('Marked as Handled (Demo)');
+              }
+            },
+            icon: const Icon(Icons.check_circle, size: 18),
+            label: const Text('Mark as Handled'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green[600],
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        OutlinedButton.icon(
+          onPressed: () => _showEmergencyEditDialog(
+            request: request,
+            isFirebase: isFirebase,
+            docId: docId,
+            demoIndex: demoIndex,
+          ),
+          icon: const Icon(Icons.edit, size: 18),
+          label: const Text('Edit'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.blue.shade700,
+            side: BorderSide(color: Colors.blue.shade700, width: 1.5),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => _deleteEmergencyRequest(
+            isFirebase: isFirebase,
+            docId: docId,
+            demoIndex: demoIndex,
+          ),
+          icon: const Icon(Icons.delete, size: 18),
+          label: const Text('Delete'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.red.shade700,
+            side: BorderSide(color: Colors.red.shade700, width: 1.5),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showEmergencyEditDialog({
+    required Map<String, dynamic> request,
+    required bool isFirebase,
+    String? docId,
+    int? demoIndex,
+  }) async {
+    final bloodGroupCtl = TextEditingController(text: (request['bloodGroup'] ?? '').toString());
+    final phoneCtl = TextEditingController(text: (request['requesterPhone'] ?? '').toString());
+    final locationCtl = TextEditingController(text: (request['location'] ?? '').toString());
+    final hospitalCtl = TextEditingController(text: (request['hospitalName'] ?? '').toString());
+    final notesCtl = TextEditingController(text: (request['notes'] ?? '').toString());
+    final urgencyCtl = TextEditingController(text: (request['urgency'] ?? 'normal').toString());
+    final statusCtl = TextEditingController(text: (request['status'] ?? 'new').toString());
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Emergency Request'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: bloodGroupCtl, decoration: const InputDecoration(labelText: 'Blood Group')),
+              TextField(controller: phoneCtl, decoration: const InputDecoration(labelText: 'Requester Phone')),
+              TextField(controller: locationCtl, decoration: const InputDecoration(labelText: 'Location')),
+              TextField(controller: hospitalCtl, decoration: const InputDecoration(labelText: 'Hospital Name')),
+              TextField(controller: urgencyCtl, decoration: const InputDecoration(labelText: 'Urgency')),
+              TextField(controller: statusCtl, decoration: const InputDecoration(labelText: 'Status')),
+              TextField(controller: notesCtl, decoration: const InputDecoration(labelText: 'Notes'), maxLines: 3),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    final updated = Map<String, dynamic>.from(request)
+      ..['bloodGroup'] = bloodGroupCtl.text.trim()
+      ..['requesterPhone'] = phoneCtl.text.trim()
+      ..['location'] = locationCtl.text.trim()
+      ..['hospitalName'] = hospitalCtl.text.trim()
+      ..['notes'] = notesCtl.text.trim()
+      ..['urgency'] = urgencyCtl.text.trim().isEmpty ? 'normal' : urgencyCtl.text.trim()
+      ..['status'] = statusCtl.text.trim().isEmpty ? 'new' : statusCtl.text.trim();
+
+    try {
+      if (isFirebase) {
+        if (docId == null) return;
+        await FirebaseFirestore.instance.collection('emergency_requests').doc(docId).update(updated);
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final list = prefs.getStringList('emergency_requests') ?? <String>[];
+        if (demoIndex == null || demoIndex < 0 || demoIndex >= list.length) return;
+        list[demoIndex] = jsonEncode(updated);
+        await prefs.setStringList('emergency_requests', list);
+      }
+      if (mounted) setState(() {});
+      _showSnack('Emergency request updated');
+    } catch (e) {
+      _showSnack('Failed to update request: $e');
+    }
+  }
+
+  Future<void> _deleteEmergencyRequest({
+    required bool isFirebase,
+    String? docId,
+    int? demoIndex,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Emergency Request'),
+        content: const Text('Are you sure you want to delete this emergency request?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      if (isFirebase) {
+        if (docId == null) return;
+        await FirebaseFirestore.instance.collection('emergency_requests').doc(docId).delete();
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final list = prefs.getStringList('emergency_requests') ?? <String>[];
+        if (demoIndex == null || demoIndex < 0 || demoIndex >= list.length) return;
+        list.removeAt(demoIndex);
+        await prefs.setStringList('emergency_requests', list);
+      }
+      if (mounted) setState(() {});
+      _showSnack('Emergency request deleted');
+    } catch (e) {
+      _showSnack('Failed to delete request: $e');
     }
   }
 
@@ -3595,6 +4663,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               } catch (_) {}
                               setState(() {});
                               _loadStats();
+                              _loadVerificationCounts();
                             },
                             child: Text(verified ? 'Verified' : 'Verify Donor'),
                           )
@@ -3611,6 +4680,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                 }
                               } catch (_) {}
                               _loadStats();
+                              _loadVerificationCounts();
                             },
                             child: Text(approved ? 'Approved' : 'Approve'),
                           ),
@@ -3665,7 +4735,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               final msg = {'to': phone, 'body': 'Hello $name, your donor verification has been approved on Blood Bridge.', 'at': DateTime.now().toIso8601String()};
                               msgs.add(jsonEncode(msg));
                               await prefs.setStringList('sent_sms', msgs);
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Simulated SMS saved for $phone')));
+                              _showSnack('Simulated SMS saved for $phone');
                             }
                           } catch (_) {}
                         setState(() {});
@@ -3796,6 +4866,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Expanded(child: _miniStatCard('Donors', _donors.toString(), Icons.bloodtype, Colors.red)),
               SizedBox(width: 12),
               Expanded(child: _miniStatCard('Recipients', _recipients.toString(), Icons.local_hospital, Colors.green)),
+              SizedBox(width: 12),
+              Expanded(child: _miniStatCard('Blood Banks', _bloodBanksCount.toString(), Icons.business, Colors.orange)),
             ],
           ),
           const SizedBox(height: 20),
@@ -3807,26 +4879,65 @@ class _AdminDashboardState extends State<AdminDashboard> {
               color: Color(0xFF1976D2).withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.list_alt, color: Color(0xFF1976D2)),
-                SizedBox(width: 8),
-                Text('All Registered Users', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1976D2))),
-                Spacer(),
-                ElevatedButton.icon(
-                  icon: Icon(Icons.person_add, size: 18),
-                  label: Text('Add User'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color(0xFF1976D2),
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  onPressed: () => _showAddUserDialog(),
+                // Title Row
+                Row(
+                  children: [
+                    Icon(Icons.list_alt, color: Color(0xFF1976D2), size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'All Registered Users',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1976D2)),
+                    ),
+                  ],
                 ),
-                SizedBox(width: 8),
-                IconButton(
-                  icon: Icon(Icons.refresh, color: Color(0xFF1976D2)),
-                  onPressed: _loadStats,
+                SizedBox(height: 12),
+                // Search Bar
+                TextField(
+                  onChanged: (value) => setState(() => _userRegistrationSearchQuery = value),
+                  decoration: InputDecoration(
+                    hintText: 'Search users by name, email, phone, role, blood group...',
+                    prefixIcon: Icon(Icons.search, color: Color(0xFF1976D2)),
+                    suffixIcon: (_userRegistrationSearchQuery.isEmpty)
+                        ? null
+                        : IconButton(
+                            icon: Icon(Icons.clear),
+                            onPressed: () => setState(() => _userRegistrationSearchQuery = ''),
+                          ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Color(0xFF1976D2)),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+                SizedBox(height: 12),
+                // Buttons Row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    ElevatedButton.icon(
+                      icon: Icon(Icons.person_add, size: 18),
+                      label: Text('Add User'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Color(0xFF1976D2),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      onPressed: () => _showAddUserDialog(),
+                    ),
+                    SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(Icons.refresh, color: Color(0xFF1976D2)),
+                      onPressed: _loadStats,
+                      padding: EdgeInsets.all(8),
+                      constraints: BoxConstraints(),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -3852,7 +4963,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     String selectedBloodGroup = 'A+';
 
     final bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-    final roles = ['donor', 'recipient', 'admin', 'super_admin'];
+    final roles = ['donor', 'recipient', 'blood_bank', 'admin', 'super_admin'];
 
     showDialog(
       context: context,
@@ -3945,6 +5056,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: selectedRole,
+                    dropdownColor: Colors.white.withOpacity(0.95),
                     decoration: InputDecoration(
                       labelText: 'Role *',
                       prefixIcon: Icon(Icons.badge),
@@ -3956,6 +5068,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: selectedBloodGroup,
+                    dropdownColor: Colors.white.withOpacity(0.95),
                     decoration: InputDecoration(
                       labelText: 'Blood Group *',
                       prefixIcon: Icon(Icons.bloodtype),
@@ -3991,19 +5104,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
               onPressed: () async {
                 if (nameCtl.text.trim().isEmpty || emailCtl.text.trim().isEmpty || passwordCtl.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Please fill all required fields'), backgroundColor: Colors.red));
+                  _showSnack('Please fill all required fields', isError: true);
                   return;
                 }
                 if (cnicCtl.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Please enter CNIC'), backgroundColor: Colors.red),
-                  );
+                  _showSnack('Please enter CNIC', isError: true);
                   return;
                 }
                 if (!RegExp(r'^\d{5}-\d{7}-\d$|^\d{13}$').hasMatch(cnicCtl.text.trim())) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('CNIC must be in 12345-1234567-1 or 13-digit format'), backgroundColor: Colors.red),
-                  );
+                  _showSnack('CNIC must be in 12345-1234567-1 or 13-digit format', isError: true);
                   return;
                 }
                 final newUser = {
@@ -4025,7 +5134,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     // Trigger rebuild to refresh user list
                   });
                   _loadStats();
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('User added successfully'), backgroundColor: Colors.green));
+                  _loadVerificationCounts();
+                  _showSnack('User added successfully');
                 }
               },
             ),
@@ -4040,7 +5150,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         await FirebaseFirestore.instance.collection('users').add(data);
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+        _showSnack('Error: $e', isError: true);
       }
     } else {
       final prefs = await SharedPreferences.getInstance();
@@ -4058,11 +5168,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
           final docs = snap.data!.docs;
           if (docs.isEmpty) return Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No users registered')));
+          
+          // Filter users based on search query
+          final filteredDocs = docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return _matchesUserRegistrationSearch(data);
+          }).toList();
+          
+          if (filteredDocs.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text(
+                  _userRegistrationSearchQuery.trim().isEmpty 
+                      ? 'No users registered' 
+                      : 'No users match your search',
+                ),
+              ),
+            );
+          }
+          
           return ListView.builder(
             shrinkWrap: true,
-            itemCount: docs.length,
+            itemCount: filteredDocs.length,
             itemBuilder: (context, i) {
-              final d = docs[i];
+              final d = filteredDocs[i];
               final data = d.data() as Map<String, dynamic>;
               return _userListTile(data, d.id, isFirebase: true);
             },
@@ -4076,16 +5206,39 @@ class _AdminDashboardState extends State<AdminDashboard> {
           if (!snap.hasData) return Center(child: BloodBridgeLoader());
           final list = snap.data!;
           if (list.isEmpty) return Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No users registered')));
+          
+          // Filter users based on search query
+          final filteredList = <Map<String, dynamic>>[];
+          final filteredIndices = <int>[];
+          
+          for (int i = 0; i < list.length; i++) {
+            try {
+              final data = jsonDecode(list[i]) as Map<String, dynamic>;
+              if (_matchesUserRegistrationSearch(data)) {
+                filteredList.add(data);
+                filteredIndices.add(i);
+              }
+            } catch (_) {}
+          }
+          
+          if (filteredList.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text(
+                  _userRegistrationSearchQuery.trim().isEmpty 
+                      ? 'No users registered' 
+                      : 'No users match your search',
+                ),
+              ),
+            );
+          }
+          
           return ListView.builder(
             shrinkWrap: true,
-            itemCount: list.length,
+            itemCount: filteredList.length,
             itemBuilder: (context, i) {
-              try {
-                final data = jsonDecode(list[i]) as Map<String, dynamic>;
-                return _userListTile(data, i.toString(), isFirebase: false);
-              } catch (_) {
-                return SizedBox.shrink();
-              }
+              return _userListTile(filteredList[i], filteredIndices[i].toString(), isFirebase: false);
             },
           );
         },
@@ -4098,68 +5251,129 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final verified = data['verified'] ?? false;
     Color roleColor = role == 'donor' ? Colors.grey : role == 'recipient' ? Colors.grey : Colors.blue;
     
-    return ListTile(
-      leading: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          CircleAvatar(
-            backgroundColor: roleColor.withOpacity(0.2),
-            radius: 24,
-            child: Icon(
-              role == 'donor' ? Icons.bloodtype : role == 'recipient' ? Icons.local_hospital : Icons.person,
-              color: roleColor,
-            ),
-          ),
-          if (verified)
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: Container(
-                padding: EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.verified,
-                  color: Colors.blue,
-                  size: 16,
-                ),
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: () {
+          if (isFirebase) {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => UserProfileScreen(firebaseUid: id)));
+          }
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // First Row: Avatar + Name/Email + Role Badge
+              Row(
+                children: [
+                  // Avatar with verified badge
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: roleColor.withOpacity(0.2),
+                        radius: 22,
+                        child: Icon(
+                          role == 'donor' ? Icons.bloodtype : role == 'recipient' ? Icons.local_hospital : Icons.person,
+                          color: roleColor,
+                          size: 20,
+                        ),
+                      ),
+                      if (verified)
+                        Positioned(
+                          right: -2,
+                          bottom: -2,
+                          child: Container(
+                            padding: EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.verified,
+                              color: Colors.blue,
+                              size: 14,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  SizedBox(width: 12),
+                  // Name and Email - Expanded to take available space
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          data['name'] ?? 'Unknown',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          data['email'] ?? 'N/A',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  // Role Badge
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: roleColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: roleColor.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      role == 'super_admin' ? 'SUPER_ADMIN' : role.toUpperCase(),
+                      style: TextStyle(fontSize: 9, color: roleColor, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
               ),
-            ),
-        ],
+              SizedBox(height: 8),
+              // Second Row: Edit and Delete Buttons (Right aligned)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton.icon(
+                    icon: Icon(Icons.edit, size: 16),
+                    label: Text('Edit', style: TextStyle(fontSize: 12)),
+                    onPressed: () => _showEditUserDialog(data, id, isFirebase),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blue,
+                      side: BorderSide(color: Colors.blue[300]!),
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    icon: Icon(Icons.delete, size: 16),
+                    label: Text('Delete', style: TextStyle(fontSize: 12)),
+                    onPressed: () => _confirmDeleteUser(data, id, isFirebase),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: BorderSide(color: Colors.red[300]!),
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
-      title: Text(data['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.bold)),
-      subtitle: Text('${data['email'] ?? 'N/A'} • ${data['bloodGroup'] ?? 'N/A'}'),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: roleColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(role.toUpperCase(), style: TextStyle(fontSize: 10, color: roleColor, fontWeight: FontWeight.bold)),
-          ),
-          SizedBox(width: 8),
-          IconButton(
-            icon: Icon(Icons.edit, color: Colors.blue, size: 20),
-            tooltip: 'Edit User',
-            onPressed: () => _showEditUserDialog(data, id, isFirebase),
-          ),
-          IconButton(
-            icon: Icon(Icons.delete, color: Colors.red, size: 20),
-            tooltip: 'Delete User',
-            onPressed: () => _confirmDeleteUser(data, id, isFirebase),
-          ),
-        ],
-      ),
-      onTap: () {
-        if (isFirebase) {
-          Navigator.of(context).push(MaterialPageRoute(builder: (_) => UserProfileScreen(firebaseUid: id)));
-        }
-      },
     );
   }
 
@@ -4173,7 +5387,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     bool verified = data['verified'] ?? false;
 
     final bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-    final roles = ['donor', 'recipient', 'admin', 'super_admin'];
+    final roles = ['donor', 'recipient', 'blood_bank', 'admin', 'super_admin'];
 
     showDialog(
       context: context,
@@ -4206,15 +5420,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                   SizedBox(height: 12),
-                  TextField(
-                    controller: emailCtl,
-                    decoration: InputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: Icon(Icons.email),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  // Hide email field for blood banks
+                  if (selectedRole != 'blood_bank') ...[
+                    TextField(
+                      controller: emailCtl,
+                      decoration: InputDecoration(
+                        labelText: 'Email',
+                        prefixIcon: Icon(Icons.email),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
                     ),
-                  ),
-                  SizedBox(height: 12),
+                    SizedBox(height: 12),
+                  ],
                   TextField(
                     controller: phoneCtl,
                     decoration: InputDecoration(
@@ -4224,38 +5441,45 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                   SizedBox(height: 12),
-                  TextField(
-                    controller: cnicCtl,
-                    onChanged: (value) {
-                      final formatted = _formatCNIC(value);
-                      if (formatted != value) {
-                        cnicCtl.text = formatted;
-                        cnicCtl.selection = TextSelection.fromPosition(
-                          TextPosition(offset: formatted.length),
-                        );
-                      }
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'CNIC',
-                      prefixIcon: Icon(Icons.badge),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  // Hide CNIC field for blood banks
+                  if (selectedRole != 'blood_bank') ...[
+                    TextField(
+                      controller: cnicCtl,
+                      onChanged: (value) {
+                        final formatted = _formatCNIC(value);
+                        if (formatted != value) {
+                          cnicCtl.text = formatted;
+                          cnicCtl.selection = TextSelection.fromPosition(
+                            TextPosition(offset: formatted.length),
+                          );
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'CNIC',
+                        prefixIcon: Icon(Icons.badge),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      keyboardType: TextInputType.number,
                     ),
-                    keyboardType: TextInputType.number,
-                  ),
-                  SizedBox(height: 12),
+                    SizedBox(height: 12),
+                  ],
                   DropdownButtonFormField<String>(
                     value: selectedRole,
+                    dropdownColor: Colors.white.withOpacity(0.95),
                     decoration: InputDecoration(
                       labelText: 'Role',
                       prefixIcon: Icon(Icons.badge),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     items: roles.map((r) => DropdownMenuItem(value: r, child: Text(r.toUpperCase()))).toList(),
-                    onChanged: (v) => setDialogState(() => selectedRole = v!),
+                    onChanged: (v) {
+                      setDialogState(() => selectedRole = v!);
+                    },
                   ),
                   SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: selectedBloodGroup,
+                    dropdownColor: Colors.white.withOpacity(0.95),
                     decoration: InputDecoration(
                       labelText: 'Blood Group',
                       prefixIcon: Icon(Icons.bloodtype),
@@ -4307,6 +5531,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   'role': selectedRole,
                   'bloodGroup': selectedBloodGroup,
                   'verified': verified,
+                  'approved': verified, // Also update approved field to match verified
                 };
                 await _updateUser(id, updated, isFirebase);
                 if (mounted) {
@@ -4314,8 +5539,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   setState(() {
                     // Trigger rebuild to refresh user list
                   });
-                  _loadStats();
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('User updated successfully'), backgroundColor: Colors.green));
+                    _loadStats();
+                    _loadVerificationCounts();
+                  _showSnack('User updated successfully');
                 }
               },
             ),
@@ -4330,7 +5556,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         await FirebaseFirestore.instance.collection('users').doc(id).update(data);
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+        _showSnack('Error: $e', isError: true);
       }
     } else {
       final prefs = await SharedPreferences.getInstance();
@@ -4394,6 +5620,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   // Trigger rebuild to refresh user list
                 });
                 _loadStats();
+                _loadVerificationCounts();
                 _showTopRightSuccess('User deleted');
               }
             },
@@ -4408,7 +5635,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         await FirebaseFirestore.instance.collection('users').doc(id).delete();
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+        _showSnack('Error: $e', isError: true);
       }
     } else {
       final prefs = await SharedPreferences.getInstance();
@@ -4453,11 +5680,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
           // Summary Cards
           Row(
             children: [
-              Expanded(child: _miniStatCard('Total Donations', '47', Icons.favorite, Colors.red)),
+              Expanded(child: _miniStatCard('Total Donations', '0', Icons.favorite, Colors.red)),
               SizedBox(width: 12),
-              Expanded(child: _miniStatCard('This Month', '12', Icons.calendar_month, Colors.blue)),
+              Expanded(child: _miniStatCard('This Month', '0', Icons.calendar_month, Colors.blue)),
               SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Pending Reminders', '8', Icons.notifications_active, Colors.orange)),
+              Expanded(child: _miniStatCard('Pending Reminders', '0', Icons.notifications_active, Colors.orange)),
             ],
           ),
           const SizedBox(height: 20),
@@ -4479,7 +5706,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Icon(Icons.history, color: Color(0xFF388E3C)),
                       SizedBox(width: 8),
-                      Text('Recent Donation Activity', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF388E3C))),
+                      Expanded(
+                        child: Text(
+                          'Recent Donation Activity',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF388E3C)),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -4506,7 +5740,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Icon(Icons.notifications_active, color: Colors.orange),
                       SizedBox(width: 8),
-                      Text('Upcoming Eligibility Reminders', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orange[800])),
+                      Expanded(
+                        child: Text(
+                          'Upcoming Eligibility Reminders',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orange[800]),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -4520,62 +5761,36 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _donationHistoryList() {
-    final donations = [
-      {'donor': 'Ahmad Khan', 'bloodGroup': 'A+', 'date': '2026-02-20', 'location': 'City Hospital'},
-      {'donor': 'Sara Ali', 'bloodGroup': 'O-', 'date': '2026-02-18', 'location': 'Blood Bank Center'},
-      {'donor': 'Usman Ahmed', 'bloodGroup': 'B+', 'date': '2026-02-15', 'location': 'Medical Complex'},
-      {'donor': 'Fatima Noor', 'bloodGroup': 'AB+', 'date': '2026-02-12', 'location': 'Red Crescent'},
-      {'donor': 'Hassan Raza', 'bloodGroup': 'O+', 'date': '2026-02-10', 'location': 'City Hospital'},
-    ];
-    
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
-      itemCount: donations.length,
-      itemBuilder: (context, i) {
-        final d = donations[i];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: Colors.red[50],
-            child: Text(d['bloodGroup']!, style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold, fontSize: 12)),
-          ),
-          title: Text(d['donor']!, style: TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('${d['location']} • ${d['date']}'),
-          trailing: Icon(Icons.check_circle, color: Colors.green, size: 20),
-        );
-      },
+    return Padding(
+      padding: EdgeInsets.all(20),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.history_outlined, size: 64, color: Colors.grey[300]),
+            SizedBox(height: 16),
+            Text('No donation history yet', style: TextStyle(color: Colors.grey[600])),
+            SizedBox(height: 8),
+            Text('Donations will appear here once recorded', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _remindersList() {
-    final reminders = [
-      {'donor': 'Ali Hassan', 'eligibleDate': '2026-02-25', 'lastDonation': '2025-11-25'},
-      {'donor': 'Maria Khan', 'eligibleDate': '2026-02-28', 'lastDonation': '2025-11-28'},
-      {'donor': 'Zain Ahmed', 'eligibleDate': '2026-03-01', 'lastDonation': '2025-12-01'},
-    ];
-    
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
-      itemCount: reminders.length,
-      itemBuilder: (context, i) {
-        final r = reminders[i];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: Colors.orange[50],
-            child: Icon(Icons.schedule, color: Colors.orange[700], size: 20),
-          ),
-          title: Text(r['donor']!, style: TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('Eligible: ${r['eligibleDate']} • Last: ${r['lastDonation']}'),
-          trailing: ElevatedButton(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Reminder sent to ${r['donor']}')));
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, padding: EdgeInsets.symmetric(horizontal: 12)),
-            child: Text('Send Reminder', style: TextStyle(fontSize: 11, color: Colors.white)),
-          ),
-        );
-      },
+    return Padding(
+      padding: EdgeInsets.all(20),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.notifications_none, size: 64, color: Colors.grey[300]),
+            SizedBox(height: 16),
+            Text('No reminders scheduled', style: TextStyle(color: Colors.grey[600])),
+            SizedBox(height: 8),
+            Text('Eligibility reminders will appear here', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -4669,7 +5884,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Icon(Icons.campaign, color: Color(0xFF7B1FA2)),
                       SizedBox(width: 8),
-                      Text('Send Broadcast Message', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF7B1FA2))),
+                      Expanded(
+                        child: Text(
+                          'Send Broadcast Message',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF7B1FA2)),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
                     ],
                   ),
                   SizedBox(height: 16),
@@ -4689,6 +5911,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       Expanded(
                         child: DropdownButtonFormField<String>(
                           value: _selectedBroadcastTarget,
+                          dropdownColor: Colors.white.withOpacity(0.95),
                           decoration: InputDecoration(
                             labelText: 'Target Audience',
                             prefixIcon: Icon(Icons.group, color: Color(0xFF7B1FA2)),
@@ -4776,7 +5999,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Icon(Icons.forum, color: Color(0xFF7B1FA2)),
                       SizedBox(width: 8),
-                      Text('Recent Conversations', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF7B1FA2))),
+                      Expanded(
+                        child: Text(
+                          'Recent Conversations',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF7B1FA2)),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -4834,6 +6064,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   fontWeight: FontWeight.bold,
                   color: color,
                 ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
               SizedBox(height: 4),
               Text(
@@ -4843,6 +6075,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   color: Colors.grey[600],
                   fontWeight: FontWeight.w500,
                 ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
               ),
             ],
           ),
@@ -4939,6 +6173,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           margin: EdgeInsets.symmetric(vertical: 6),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           child: ListTile(
+            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             leading: Stack(
               children: [
                 CircleAvatar(
@@ -4975,25 +6210,32 @@ class _AdminDashboardState extends State<AdminDashboard> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 13, color: Colors.grey[700]),
             ),
-            trailing: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(timeAgo, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                if ((chat['unreadCount'] ?? 0) > 0)
-                  Container(
-                    margin: EdgeInsets.only(top: 4),
-                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.purple,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      'New',
-                      style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
-                    ),
+            trailing: SizedBox(
+              width: 70,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    timeAgo,
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    overflow: TextOverflow.ellipsis,
                   ),
-              ],
+                  if ((chat['unreadCount'] ?? 0) > 0)
+                    Container(
+                      margin: EdgeInsets.only(top: 4),
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.purple,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        'New',
+                        style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         );
@@ -5176,11 +6418,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           fontSize: 14,
                           color: isAdminMessage ? Colors.purple[800] : Colors.black87,
                         ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
                       SizedBox(height: 2),
                       Text(
                         userEmail,
                         style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
                       Row(
                         children: [
@@ -5201,6 +6447,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ],
                   ),
                 ),
+                SizedBox(width: 8),
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
@@ -5222,6 +6469,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
             SizedBox(height: 12),
             Container(
+              width: double.infinity,
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Colors.grey[50],
@@ -5241,35 +6489,39 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      _showResponseDialog(message['from'] ?? 'User');
-                    },
-                    icon: Icon(Icons.reply, size: 16),
-                    label: Text('Reply'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      foregroundColor: Colors.black,
-                      side: BorderSide(color: Colors.black, width: 2),
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Flexible(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        _showResponseDialog(message['from'] ?? 'User');
+                      },
+                      icon: Icon(Icons.reply, size: 16),
+                      label: Text('Reply'),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: Colors.black,
+                        side: BorderSide(color: Colors.black, width: 2),
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                   ),
                   SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      _confirmDeleteMessage(message);
-                    },
-                    icon: Icon(Icons.delete, size: 16),
-                    label: Text('Delete'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red[700],
-                      side: BorderSide(color: Colors.red[300]!),
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Flexible(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        _confirmDeleteMessage(message);
+                      },
+                      icon: Icon(Icons.delete, size: 16),
+                      label: Text('Delete'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red[700],
+                        side: BorderSide(color: Colors.red[300]!),
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                   ),
@@ -5282,34 +6534,38 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      _showEditMessageDialog(message);
-                    },
-                    icon: Icon(Icons.edit, size: 16),
-                    label: Text('Edit'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.blue[700],
-                      side: BorderSide(color: Colors.blue[300]!),
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Flexible(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        _showEditMessageDialog(message);
+                      },
+                      icon: Icon(Icons.edit, size: 16),
+                      label: Text('Edit'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue[700],
+                        side: BorderSide(color: Colors.blue[300]!),
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                   ),
                   SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      _confirmDeleteMessage(message);
-                    },
-                    icon: Icon(Icons.delete, size: 16),
-                    label: Text('Delete'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red[700],
-                      side: BorderSide(color: Colors.red[300]!),
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Flexible(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        _confirmDeleteMessage(message);
+                      },
+                      icon: Icon(Icons.delete, size: 16),
+                      label: Text('Delete'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red[700],
+                        side: BorderSide(color: Colors.red[300]!),
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                   ),
@@ -5331,37 +6587,54 @@ class _AdminDashboardState extends State<AdminDashboard> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Icon(Icons.reply, color: Color(0xFF7B1FA2)),
-            SizedBox(width: 12),
-            Expanded(child: Text('Reply to $recipientEmail', style: TextStyle(fontSize: 16))),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Type your message to send to $recipientEmail',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-            SizedBox(height: 12),
-            TextField(
-              controller: responseController,
-              autofocus: true,
-              maxLines: 4,
-              decoration: InputDecoration(
-                hintText: 'Type your response here...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Color(0xFF7B1FA2), width: 2),
-                ),
-                filled: true,
-                fillColor: Colors.grey[50],
-                contentPadding: EdgeInsets.all(12),
+            Icon(Icons.reply, color: Color(0xFF7B1FA2), size: 20),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Reply to',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Type your message to send to',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              SizedBox(height: 4),
+              Text(
+                recipientEmail,
+                style: TextStyle(fontSize: 12, color: Colors.grey[800], fontWeight: FontWeight.w500),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: responseController,
+                autofocus: true,
+                maxLines: 3,
+                maxLength: 500,
+                decoration: InputDecoration(
+                  hintText: 'Type your response here...',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Color(0xFF7B1FA2), width: 2),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  counterStyle: TextStyle(fontSize: 10),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -5371,7 +6644,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             },
             child: Text('Cancel', style: TextStyle(color: Colors.grey[700])),
             style: TextButton.styleFrom(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
           ),
           ElevatedButton.icon(
@@ -5383,19 +6656,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 Navigator.pop(context);
               }
             },
-            icon: Icon(Icons.send, size: 18),
+            icon: Icon(Icons.send, size: 16),
             label: Text('Send Reply'),
             style: OutlinedButton.styleFrom(
               backgroundColor: Colors.transparent,
               foregroundColor: Colors.black,
               side: BorderSide(color: Colors.black, width: 2),
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
           ),
         ],
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 12),
       ),
     );
   }
@@ -5578,9 +6852,26 @@ class _AdminDashboardState extends State<AdminDashboard> {
             backgroundColor: Colors.purple[50],
             child: Icon(Icons.person, color: Colors.purple[700], size: 20),
           ),
-          title: Text(participantNames, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-          subtitle: Text(chat['lastMessage'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
-          trailing: Text(timeAgo, style: TextStyle(fontSize: 11, color: Colors.grey)),
+          title: Text(
+            participantNames,
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+          subtitle: Text(
+            chat['lastMessage'] ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: SizedBox(
+            width: 60,
+            child: Text(
+              timeAgo,
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         );
       },
     );
@@ -5590,99 +6881,115 @@ class _AdminDashboardState extends State<AdminDashboard> {
   // M5: Gamification & Engagement Module
   // =====================================================================
   Widget _buildGamificationModule() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _moduleHeader('Gamification & Engagement', Icons.emoji_events, Color(0xFFD32F2F)),
-          const SizedBox(height: 16),
-          
-          // Stats Row
-          Row(
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _loadGamificationStats(),
+      builder: (context, snap) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _miniStatCard('Total Points Awarded', '15,420', Icons.stars, Colors.amber)),
-              SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Badges Earned', '234', Icons.military_tech, Colors.blue)),
-              SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Top Donors', '25', Icons.leaderboard, Colors.green)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          
-          // Leaderboard
-          Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
+              _moduleHeader('Gamification & Engagement', Icons.emoji_events, Color(0xFFD32F2F)),
+              const SizedBox(height: 16),
+              
+              // Stats Row
+              Row(
+                children: [
+                  Expanded(child: _miniStatCard('Total Points Awarded', '${snap.data?['totalPoints'] ?? 0}', Icons.stars, Colors.amber)),
+                  SizedBox(width: 12),
+                  Expanded(child: _miniStatCard('Badges Earned', '${snap.data?['totalBadges'] ?? 0}', Icons.military_tech, Colors.blue)),
+                  SizedBox(width: 12),
+                  Expanded(child: _miniStatCard('Active Users', '${snap.data?['activeUsers'] ?? 0}', Icons.leaderboard, Colors.green)),
+                ],
+              ),
+              const SizedBox(height: 20),
+              
+              // Leaderboard
+              Card(
+                elevation: 3,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: [Colors.amber[700]!, Colors.amber[500]!]),
+                        borderRadius: BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.leaderboard, color: Colors.white),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Top Donors Leaderboard',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _leaderboardList(snap.data?['leaderboard'] ?? []),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              // Badges Section
+              Card(
+                elevation: 3,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
                   padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [Colors.amber[700]!, Colors.amber[500]!]),
-                    borderRadius: BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
-                  ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.leaderboard, color: Colors.white),
-                      SizedBox(width: 8),
-                      Text('Top Donors Leaderboard', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                      Row(
+                        children: [
+                          Icon(Icons.military_tech, color: Colors.blue),
+                          SizedBox(width: 8),
+                          Text('Available Badges', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _badgeChip('First Donation', Icons.favorite, Colors.red),
+                          _badgeChip('5 Donations', Icons.star, Colors.amber),
+                          _badgeChip('10 Donations', Icons.stars, Colors.orange),
+                          _badgeChip('Life Saver', Icons.health_and_safety, Colors.green),
+                          _badgeChip('Emergency Hero', Icons.emergency, Colors.red),
+                          _badgeChip('Community Champion', Icons.groups, Colors.blue),
+                        ],
+                      ),
                     ],
                   ),
                 ),
-                _leaderboardList(),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          
-          // Badges Section
-          Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.military_tech, color: Colors.blue),
-                      SizedBox(width: 8),
-                      Text('Available Badges', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  SizedBox(height: 16),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      _badgeChip('First Donation', Icons.favorite, Colors.red),
-                      _badgeChip('5 Donations', Icons.star, Colors.amber),
-                      _badgeChip('10 Donations', Icons.stars, Colors.orange),
-                      _badgeChip('Life Saver', Icons.health_and_safety, Colors.green),
-                      _badgeChip('Emergency Hero', Icons.emergency, Colors.red),
-                      _badgeChip('Community Champion', Icons.groups, Colors.blue),
-                    ],
-                  ),
-                ],
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  Widget _leaderboardList() {
-    final leaders = [
-      {'rank': 1, 'name': 'Ahmad Khan', 'donations': 25, 'points': 2500},
-      {'rank': 2, 'name': 'Sara Ali', 'donations': 22, 'points': 2200},
-      {'rank': 3, 'name': 'Usman Ahmed', 'donations': 20, 'points': 2000},
-      {'rank': 4, 'name': 'Fatima Noor', 'donations': 18, 'points': 1800},
-      {'rank': 5, 'name': 'Hassan Raza', 'donations': 15, 'points': 1500},
-    ];
+  Widget _leaderboardList(List<Map<String, dynamic>> leaders) {
+    if (leaders.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(
+          child: Text(
+            'No leaderboard data yet',
+            style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    }
     
     return ListView.builder(
       shrinkWrap: true,
@@ -5690,20 +6997,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
       itemCount: leaders.length,
       itemBuilder: (context, i) {
         final l = leaders[i];
-        Color medalColor = l['rank'] == 1 ? Colors.amber : l['rank'] == 2 ? Colors.grey[400]! : l['rank'] == 3 ? Colors.brown[300]! : Colors.grey[300]!;
+        final rank = i + 1;
+        Color medalColor = rank == 1 ? Colors.amber : rank == 2 ? Colors.grey[400]! : rank == 3 ? Colors.brown[300]! : Colors.grey[300]!;
         return ListTile(
           leading: CircleAvatar(
             backgroundColor: medalColor,
-            child: Text('${l['rank']}', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: Text('$rank', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
-          title: Text(l['name'] as String, style: TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('${l['donations']} donations'),
+          title: Text(l['name'] as String? ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Text('${l['email'] ?? ''}'),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.stars, color: Colors.amber, size: 18),
               SizedBox(width: 4),
-              Text('${l['points']} pts', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber[800])),
+              Text('${l['score'] ?? 0} pts', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber[800])),
             ],
           ),
         );
@@ -5730,6 +7038,78 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  Future<Map<String, dynamic>> _loadGamificationStats() async {
+    final stats = {
+      'totalPoints': 0,
+      'totalBadges': 0,
+      'activeUsers': 0,
+      'leaderboard': <Map<String, dynamic>>[],
+    };
+
+    if (FirebaseService.initialized) {
+      try {
+        // Load leaderboard from Firebase
+        final lbSnap = await FirebaseFirestore.instance.collection('leaderboard').get();
+        final leaderboard = <Map<String, dynamic>>[];
+        
+        for (final doc in lbSnap.docs) {
+          final data = doc.data();
+          leaderboard.add({
+            'name': data['name'] ?? 'Unknown',
+            'email': data['email'] ?? '',
+            'score': data['score'] ?? 0,
+          });
+        }
+        
+        // Sort by score descending
+        leaderboard.sort((a, b) => (b['score'] as int).compareTo(a['score'] as int));
+        
+        // Take top 5
+        stats['leaderboard'] = leaderboard.take(5).toList();
+        stats['activeUsers'] = leaderboard.length;
+        
+        // Calculate total points (sum of all scores)
+        stats['totalPoints'] = leaderboard.fold<int>(0, (sum, entry) => sum + (entry['score'] as int? ?? 0));
+        
+      } catch (e) {
+        print('Error loading gamification stats from Firebase: $e');
+      }
+    } else {
+      // Load from SharedPreferences (demo mode)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final lbList = prefs.getStringList('leaderboard') ?? [];
+        final leaderboard = <Map<String, dynamic>>[];
+        
+        for (final s in lbList) {
+          try {
+            final data = jsonDecode(s) as Map<String, dynamic>;
+            leaderboard.add({
+              'name': data['name'] ?? 'Unknown',
+              'email': data['email'] ?? '',
+              'score': data['score'] ?? 0,
+            });
+          } catch (_) {}
+        }
+        
+        // Sort by score descending
+        leaderboard.sort((a, b) => (b['score'] as int).compareTo(a['score'] as int));
+        
+        // Take top 5
+        stats['leaderboard'] = leaderboard.take(5).toList();
+        stats['activeUsers'] = leaderboard.length;
+        
+        // Calculate total points
+        stats['totalPoints'] = leaderboard.fold<int>(0, (sum, entry) => sum + (entry['score'] as int? ?? 0));
+        
+      } catch (e) {
+        print('Error loading gamification stats from SharedPreferences: $e');
+      }
+    }
+
+    return stats;
+  }
+
   // =====================================================================
   // M6: Donor Verification & Reputation System
   // =====================================================================
@@ -5745,11 +7125,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
           // Stats Row
           Row(
             children: [
-              Expanded(child: _miniStatCard('Verified Donors', '89', Icons.verified, Colors.green)),
+              Expanded(child: _miniStatCard('Verified Donors', _verifiedDonorsCount.toString(), Icons.verified, Colors.green)),
               SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Pending Verification', '12', Icons.pending, Colors.orange)),
+              Expanded(child: _miniStatCard('Verified Recipients', _verifiedRecipientsCount.toString(), Icons.verified, Colors.purple)),
               SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Avg. Rating', '4.7', Icons.star, Colors.amber)),
+              Expanded(child: _miniStatCard('Pending Verification', _pendingVerificationCount.toString(), Icons.pending, Colors.orange)),
             ],
           ),
           const SizedBox(height: 20),
@@ -5781,7 +7161,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 16),
           
-          // Recently Verified
+          // Recently Verified Donors
           Card(
             elevation: 3,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -5803,6 +7183,33 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ),
                 _verifiedDonorsList(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Recently Verified Recipients
+          Card(
+            elevation: 3,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withOpacity(0.1),
+                    borderRadius: BorderRadius.only(topLeft: Radius.circular(12), topRight: Radius.circular(12)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.verified, color: Colors.purple),
+                      SizedBox(width: 8),
+                      Text('Recently Verified Recipients', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.purple)),
+                    ],
+                  ),
+                ),
+                _verifiedRecipientsList(),
               ],
             ),
           ),
@@ -6052,6 +7459,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return donors;
   }
 
+  Future<List<Map<String, dynamic>>> _getAllDemoRecipients() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('demo_users') ?? <String>[];
+    List<Map<String, dynamic>> recipients = [];
+    
+    for (final s in list) {
+      try {
+        final Map<String, dynamic> u = jsonDecode(s);
+        if ((u['role'] ?? '') == 'recipient') {
+          recipients.add(u);
+        }
+      } catch (_) {}
+    }
+    
+    return recipients;
+  }
+
   Widget _pendingVerificationsList() {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _loadPendingVerificationRequests(),
@@ -6198,6 +7622,74 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  Widget _verifiedRecipientsList() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _loadVerifiedRecipients(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: BloodBridgeLoader()),
+          );
+        }
+
+        final verified = snap.data ?? <Map<String, dynamic>>[];
+        if (verified.isEmpty) {
+          return Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(
+              child: Text(
+                'No verified recipients yet',
+                style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w600),
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: NeverScrollableScrollPhysics(),
+          itemCount: verified.length,
+          itemBuilder: (context, i) {
+            final v = verified[i];
+            final bloodGroup = (v['bloodGroup'] ?? 'N/A').toString();
+            final receivedCount = (v['receivedBlood'] ?? v['bloodReceivedCount'] ?? 0).toString();
+            final rating = (v['rating'] ?? v['reputation'] ?? 4.5).toString();
+
+            return ListTile(
+              leading: Stack(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: Colors.purple[50],
+                    child: Text(
+                      bloodGroup,
+                      style: TextStyle(color: Colors.purple[800], fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Icon(Icons.verified, color: Colors.blue, size: 14),
+                  ),
+                ],
+              ),
+              title: Text((v['name'] ?? 'Unknown').toString(), style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text('$receivedCount blood received'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.star, color: Colors.amber, size: 18),
+                  SizedBox(width: 4),
+                  Text(rating, style: TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<List<Map<String, dynamic>>> _loadPendingVerificationRequests() async {
     if (FirebaseService.initialized) {
       final snap = await FirebaseFirestore.instance
@@ -6273,10 +7765,61 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
 
     final donors = await _getAllDemoDonors();
-    return donors.where((d) {
+    final filtered = donors.where((d) {
       final status = (d['verificationStatus'] ?? '').toString().toLowerCase();
-      return d['verified'] == true || status == 'approved';
+      final isVerified = d['verified'] == true || status == 'approved';
+      // Only return if explicitly verified
+      return isVerified && status.isNotEmpty && status == 'approved';
     }).toList();
+    
+    return filtered;
+  }
+
+  Future<List<Map<String, dynamic>>> _loadVerifiedRecipients() async {
+    if (FirebaseService.initialized) {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('role', isEqualTo: 'recipient')
+          .get();
+      final verified = <Map<String, dynamic>>[];
+      for (final d in snap.docs) {
+        final data = d.data();
+        final status = (data['verificationStatus'] ?? '').toString().toLowerCase();
+        final isVerified = data['verified'] == true || status == 'approved';
+        if (isVerified) {
+          verified.add(data);
+        }
+      }
+      return verified;
+    }
+
+    final recipients = await _getAllDemoRecipients();
+    final filtered = recipients.where((r) {
+      final status = (r['verificationStatus'] ?? '').toString().toLowerCase();
+      final isVerified = r['verified'] == true || status == 'approved';
+      // Only return if explicitly verified
+      return isVerified && status.isNotEmpty && status == 'approved';
+    }).toList();
+    
+    return filtered;
+  }
+
+  Future<void> _loadVerificationCounts() async {
+    try {
+      final verifiedDonors = await _loadVerifiedDonors();
+      final verifiedRecipients = await _loadVerifiedRecipients();
+      final pending = await _loadPendingVerificationRequests();
+
+      if (mounted) {
+        setState(() {
+          _verifiedDonorsCount = verifiedDonors.length;
+          _verifiedRecipientsCount = verifiedRecipients.length;
+          _pendingVerificationCount = pending.length;
+        });
+      }
+    } catch (e) {
+      print('Error loading verification counts: $e');
+    }
   }
 
   DateTime? _toDateTime(dynamic value) {
@@ -6335,25 +7878,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
       }
 
       if (mounted) {
+        await _loadVerificationCounts();
         setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(approve ? 'Donor verified successfully' : 'Verification rejected')),
-        );
+        _showSnack(approve ? 'Donor verified successfully' : 'Verification rejected');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Verification update failed: $e'), backgroundColor: Colors.red),
-        );
+        _showSnack('Verification update failed: $e', isError: true);
       }
     }
   }
 
   void _showVerificationDocumentPreview(String donorName, String documentData) {
     if (documentData.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No document uploaded for $donorName')),
-      );
+      _showSnack('No document uploaded for $donorName', isWarning: true);
       return;
     }
 
@@ -6439,8 +7977,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Icon(Icons.local_hospital, color: Color(0xFF388E3C)),
                       SizedBox(width: 8),
-                      Text('All Blood Banks & Hospitals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF388E3C))),
-                      Spacer(),
+                      Expanded(
+                        child: Text(
+                          'All Blood Banks & Hospitals',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF388E3C)),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                      SizedBox(width: 8),
                       ElevatedButton.icon(
                         icon: Icon(Icons.add, size: 18),
                         label: Text('Add Blood Bank'),
@@ -6455,6 +8000,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       IconButton(
                         icon: Icon(Icons.refresh, color: Color(0xFF388E3C)),
                         onPressed: _loadBloodBanks,
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(),
                       ),
                     ],
                   ),
@@ -6756,6 +8303,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
   // M8: Analytics & Reports Dashboard
   // =====================================================================
   Widget _buildAnalyticsModule() {
+    final monthlyRequestsText = (_monthlyRequestsCount ?? 0).toString();
+    final approvalRateText = '${(_approvalRate ?? 0.0).toStringAsFixed(0)}%';
+    final averageResponseText = '${(_averageResponseHours ?? 0.0).toStringAsFixed(1)}h';
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -6767,11 +8318,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
           // Summary Stats
           Row(
             children: [
-              Expanded(child: _miniStatCard('Monthly Donations', '127', Icons.trending_up, Colors.green)),
+              Expanded(child: _miniStatCard('Monthly Requests', monthlyRequestsText, Icons.trending_up, Colors.green)),
               SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Success Rate', '94%', Icons.pie_chart, Colors.blue)),
+              Expanded(child: _miniStatCard('Approval Rate', approvalRateText, Icons.pie_chart, Colors.blue)),
               SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Avg Response', '2.3h', Icons.timer, Colors.orange)),
+              Expanded(child: _miniStatCard('Avg Response', averageResponseText, Icons.timer, Colors.orange)),
             ],
           ),
           const SizedBox(height: 20),
@@ -6813,7 +8364,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Icon(Icons.show_chart, color: Colors.blue),
                       SizedBox(width: 8),
-                      Text('Monthly Donation Trends', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text('Monthly Request Trends', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ],
                   ),
                   SizedBox(height: 16),
@@ -6839,13 +8390,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     spacing: 12,
                     children: [
                       ElevatedButton.icon(
-                        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exporting PDF...'))),
+                        onPressed: () => _showSnack('Exporting PDF...', isWarning: true),
                         icon: Icon(Icons.picture_as_pdf),
                         label: Text('PDF Report'),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                       ),
                       ElevatedButton.icon(
-                        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exporting Excel...'))),
+                        onPressed: () => _showSnack('Exporting Excel...', isWarning: true),
                         icon: Icon(Icons.table_chart),
                         label: Text('Excel Export'),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
@@ -6889,105 +8440,203 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Column(
       children: [
         // Total count display
-        Container(
-          padding: EdgeInsets.all(12),
-          margin: EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.blue.shade200),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.people, color: Colors.blue.shade700, size: 20),
-              SizedBox(width: 8),
-              Text(
-                'Total Users: $totalUsers',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue.shade900,
-                ),
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: Duration(milliseconds: 800),
+          builder: (context, value, child) {
+            return Opacity(
+              opacity: value,
+              child: Transform.scale(
+                scale: 0.9 + (0.1 * value),
+                child: child,
               ),
-            ],
-          ),
-        ),
-        // Blood group distribution bars
-        ...bloodGroupsConfig.map((config) {
-          final type = config['type'] as String;
-          final color = config['color'] as Color;
-          final count = _bloodGroupDistribution[type] ?? 0;
-          final percent = totalUsers > 0 ? (count / totalUsers * 100) : 0.0;
-          
-          return Padding(
-            padding: EdgeInsets.symmetric(vertical: 4),
+            );
+          },
+          child: Container(
+            padding: EdgeInsets.all(12),
+            margin: EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue.shade200),
+            ),
             child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                SizedBox(
-                  width: 50,
-                  child: Text(
-                    type,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
+                Icon(Icons.people, color: Colors.blue.shade700, size: 20),
                 SizedBox(width: 8),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      LinearProgressIndicator(
-                        value: count > 0 ? (percent / 100) : 0,
-                        backgroundColor: color.withOpacity(0.2),
-                        valueColor: AlwaysStoppedAnimation(color),
-                        minHeight: 20,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      if (count > 0)
-                        Positioned.fill(
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding: EdgeInsets.only(left: 8),
-                              child: Text(
-                                '$count users',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                      color: Colors.black26,
-                                      blurRadius: 2,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                SizedBox(width: 8),
-                SizedBox(
-                  width: 50,
-                  child: Text(
-                    '${percent.toStringAsFixed(1)}%',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: Colors.grey[700],
-                    ),
+                Text(
+                  'Total Users: $totalUsers',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade900,
                   ),
                 ),
               ],
             ),
+          ),
+        ),
+        // Blood group distribution bars - CLICKABLE
+        ...bloodGroupsConfig.asMap().entries.map((entry) {
+          final index = entry.key;
+          final config = entry.value;
+          final type = config['type'] as String;
+          final color = config['color'] as Color;
+          final count = _bloodGroupDistribution[type] ?? 0;
+          final percent = totalUsers > 0 ? (count / totalUsers * 100) : 0.0;
+          final isSelected = _selectedBloodGroup == type;
+          
+          return TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: Duration(milliseconds: 600 + (index * 50)),
+            builder: (context, value, child) {
+              return Opacity(
+                opacity: value,
+                child: Transform.translate(
+                  offset: Offset(-50 * (1 - value), 0),
+                  child: child,
+                ),
+              );
+            },
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _selectedBloodGroup = isSelected ? null : type;
+                  });
+                  if (!isSelected) {
+                    _loadBloodGroupTrends(type);
+                  }
+                },
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: AnimatedContainer(
+                    duration: Duration(milliseconds: 300),
+                    padding: EdgeInsets.all(isSelected ? 12 : 8),
+                    decoration: BoxDecoration(
+                      color: isSelected ? color.withOpacity(0.1) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected ? color : Colors.transparent,
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 50,
+                          child: Text(
+                            type,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              color: isSelected ? color : Colors.black,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              LinearProgressIndicator(
+                                value: count > 0 ? (percent / 100) : 0,
+                                backgroundColor: color.withOpacity(0.2),
+                                valueColor: AlwaysStoppedAnimation(isSelected ? color.withOpacity(0.8) : color),
+                                minHeight: isSelected ? 28 : 20,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              if (count > 0)
+                                Positioned.fill(
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Padding(
+                                      padding: EdgeInsets.only(left: 8),
+                                      child: Text(
+                                        '$count users',
+                                        style: TextStyle(
+                                          fontSize: isSelected ? 12 : 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                          shadows: [
+                                            Shadow(
+                                              color: Colors.black26,
+                                              blurRadius: 2,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        SizedBox(
+                          width: 50,
+                          child: Text(
+                            '${percent.toStringAsFixed(1)}%',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: isSelected ? 14 : 13,
+                              color: isSelected ? color : Colors.grey[700],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           );
         }).toList(),
+        // Selected blood group graph
+        if (_selectedBloodGroup != null) ...[
+          SizedBox(height: 20),
+          Container(
+            padding: EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: _getBloodGroupColor(_selectedBloodGroup!),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Donation Trends - Blood Group $_selectedBloodGroup',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 16),
+                _buildBloodGroupGraph(),
+              ],
+            ),
+          ),
+        ],
         // Refresh button
         SizedBox(height: 12),
         TextButton.icon(
@@ -6997,6 +8646,101 @@ class _AdminDashboardState extends State<AdminDashboard> {
           style: TextButton.styleFrom(
             foregroundColor: Color(0xFF7B1FA2),
           ),
+        ),
+      ],
+    );
+  }
+
+  Color _getBloodGroupColor(String bloodGroup) {
+    const bloodGroupColors = {
+      'O+': Colors.red,
+      'O-': Colors.red,
+      'A+': Colors.blue,
+      'A-': Colors.blue,
+      'B+': Colors.green,
+      'B-': Colors.green,
+      'AB+': Colors.purple,
+      'AB-': Colors.purple,
+    };
+    return bloodGroupColors[bloodGroup] ?? Colors.grey;
+  }
+
+  Widget _buildBloodGroupGraph() {
+    if (_isLoadingSelectedBloodGroupTrends) {
+      return Padding(
+        padding: EdgeInsets.all(40),
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_selectedBloodGroupTrends.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(
+          child: Text('No donation data available for this blood group'),
+        ),
+      );
+    }
+
+    final values = _selectedBloodGroupTrends.map((t) => (t['donations'] as int).toDouble()).toList();
+    final months = _selectedBloodGroupTrends.map((t) => t['month'] as String).toList();
+    final maxVal = values.isNotEmpty ? values.reduce((a, b) => a > b ? a : b) : 0;
+    final minVal = values.isNotEmpty ? values.reduce((a, b) => a < b ? a : b) : 0;
+    
+    return Column(
+      children: [
+        // Line graph
+        SizedBox(
+          height: 220,
+          child: Padding(
+            padding: EdgeInsets.only(left: 8, right: 8, top: 8, bottom: 20),
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _BloodGroupLineGraphPainter(
+                values: values,
+                months: months,
+                maxValue: (maxVal > 0 ? maxVal : 5).toDouble(),
+                minValue: 0,
+                color: _getBloodGroupColor(_selectedBloodGroup!),
+              ),
+            ),
+          ),
+        ),
+        // Legend showing months and values
+        SizedBox(height: 16),
+        Wrap(
+          spacing: 16,
+          runSpacing: 8,
+          children: _selectedBloodGroupTrends.asMap().entries.map((entry) {
+            final index = entry.key;
+            final trend = entry.value;
+            return Container(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _getBloodGroupColor(_selectedBloodGroup!),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    '${trend['month']}: ${trend['donations']} donations',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
         ),
       ],
     );
@@ -7028,9 +8772,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
       children: [
         // Line graph
         SizedBox(
-          height: 180,
+          height: 200,
           child: Padding(
-            padding: EdgeInsets.only(left: 8, right: 8, top: 8, bottom: 8),
+            padding: EdgeInsets.only(left: 8, right: 8, top: 8, bottom: 20),
             child: CustomPaint(
               size: Size.infinite,
               painter: _LineGraphPainter(
@@ -7103,6 +8847,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
+                          dropdownColor: Colors.white.withOpacity(0.95),
                           decoration: InputDecoration(
                             labelText: 'Required Blood Group',
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -7116,7 +8861,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       SizedBox(width: 12),
                       ElevatedButton.icon(
                         onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Finding compatible donors...')));
+                          _showSnack('Finding compatible donors...');
                         },
                         icon: Icon(Icons.search),
                         label: Text('Find Matches'),
@@ -7246,7 +8991,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
         IconButton(
           icon: Icon(Icons.arrow_back, color: Color(0xFFD32F2F)),
           onPressed: () => setState(() => _currentModule = 'overview'),
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints(),
         ),
+        SizedBox(width: 8),
         Container(
           padding: EdgeInsets.all(10),
           decoration: BoxDecoration(
@@ -7256,7 +9004,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
           child: Icon(icon, color: color, size: 28),
         ),
         SizedBox(width: 12),
-        Text(title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF424242)),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
       ],
     );
   }
@@ -7271,8 +9026,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
           children: [
             Icon(icon, color: color, size: 24),
             SizedBox(height: 6),
-            Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
-            Text(title, style: TextStyle(fontSize: 10, color: Colors.grey[600]), textAlign: TextAlign.center),
+            Text(
+              value,
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+            Text(
+              title,
+              style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
           ],
         ),
       ),
@@ -7349,9 +9115,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         final contact = contactCtl.text.trim();
                         
                         if (name.isEmpty || contact.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Please fill all fields'), backgroundColor: Colors.red),
-                          );
+                          _showSnack('Please fill all fields', isError: true);
                           return;
                         }
                         
@@ -7385,22 +9149,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           }
                           if (mounted) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Contact information updated successfully'), backgroundColor: Colors.green),
-                            );
+                            _showSnack('Contact information updated successfully');
                             nameCtl.clear();
                             contactCtl.clear();
                           }
                         } catch (e) {
                           if (mounted) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-                            );
+                            _showSnack('Error: $e', isError: true);
                           }
                         }
                       },
-                      child: Text('Update Contact Info', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      child: Text('Update Contact Info', style: TextStyle(fontSize: 16, color: Colors.black)),
                     ),
                   ),
                 ],
@@ -7448,9 +9208,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       onPressed: () async {
                         final newEmail = emailCtl.text.trim();
                         if (newEmail.isEmpty || !newEmail.contains('@')) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Please enter a valid email'), backgroundColor: Colors.red),
-                          );
+                          _showSnack('Please enter a valid email', isError: true);
                           return;
                         }
                         
@@ -7482,21 +9240,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           }
                           if (mounted) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Email updated successfully'), backgroundColor: Colors.green),
-                            );
+                            _showSnack('Email updated successfully');
                             emailCtl.clear();
                           }
                         } catch (e) {
                           if (mounted) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-                            );
+                            _showSnack('Error: $e', isError: true);
                           }
                         }
                       },
-                      child: Text('Update Email', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      child: Text('Update Email', style: TextStyle(fontSize: 16, color: Colors.black)),
                     ),
                   ),
                 ],
@@ -7568,23 +9322,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         final confirmPass = confirmPasswordCtl.text;
                         
                         if (currentPass.isEmpty || newPass.isEmpty || confirmPass.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Please fill all fields'), backgroundColor: Colors.red),
-                          );
+                          _showSnack('Please fill all fields', isError: true);
                           return;
                         }
                         
                         if (newPass != confirmPass) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('New passwords do not match'), backgroundColor: Colors.red),
-                          );
+                          _showSnack('New passwords do not match', isError: true);
                           return;
                         }
                         
                         if (newPass.length < 6) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Password must be at least 6 characters'), backgroundColor: Colors.red),
-                          );
+                          _showSnack('Password must be at least 6 characters', isError: true);
                           return;
                         }
                         
@@ -7625,9 +9373,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           }
                           if (mounted) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Password updated successfully'), backgroundColor: Colors.green),
-                            );
+                            _showSnack('Password updated successfully');
                             currentPasswordCtl.clear();
                             newPasswordCtl.clear();
                             confirmPasswordCtl.clear();
@@ -7635,24 +9381,131 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         } catch (e) {
                           if (mounted) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-                            );
+                            _showSnack('Error: $e', isError: true);
                           }
                         }
                       },
-                      child: Text('Change Password', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      child: Text('Change Password', style: TextStyle(fontSize: 16, color: Colors.black)),
                     ),
                   ),
                 ],
               ),
             ),
           ),
+          
+          const SizedBox(height: 20),
+          
+          // Clear Demo Data (only in demo mode)
+          if (!FirebaseService.initialized)
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.cleaning_services, color: Color(0xFFD32F2F)),
+                        SizedBox(width: 12),
+                        Text('Demo Data Management', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Clear all demo users and start fresh. This will remove all registered demo donors, recipients, and other test data.',
+                      style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        minimumSize: Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: Text('Clear All Demo Data?'),
+                            content: Text(
+                              'This will permanently delete all demo users, donors, recipients, and test data. This action cannot be undone.\n\nAre you sure you want to continue?',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: Text('Cancel'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () async {
+                                  Navigator.pop(context);
+                                  await _clearAllDemoData();
+                                  if (mounted) {
+                                    _showSnack('✓ All demo data cleared. Only super admin remains.');
+                                    setState(() {});
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                                child: Text('Clear All Data'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      child: Text('Clear All Demo Data', style: TextStyle(fontSize: 16, color: Colors.white)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _clearAllDemoData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('demo_users') ?? <String>[];
+    
+    // Keep only the super admin
+    final superAdminOnly = <String>[];
+    for (final entry in list) {
+      try {
+        final Map<String, dynamic> user = jsonDecode(entry);
+        if ((user['role'] ?? '') == 'super_admin') {
+          superAdminOnly.add(entry);
+        }
+      } catch (_) {}
+    }
+    
+    // If no super admin, recreate one
+    if (superAdminOnly.isEmpty) {
+      superAdminOnly.add(jsonEncode({
+        'id': 'superadmin-demo',
+        'name': 'Super Admin',
+        'email': 'superadmin@bloodbridge.app',
+        'password': 'SuperAdmin@123',
+        'contact': '+92-300-1234567',
+        'bloodGroup': 'O+',
+        'role': 'super_admin',
+        'location': 'Islamabad, Pakistan',
+        'photoData': '',
+        'createdAt': DateTime.now().toIso8601String(),
+        'approved': true,
+      }));
+    }
+    
+    await prefs.setStringList('demo_users', superAdminOnly);
+    
+    // Reload the stats to reflect cleared data
+    _loadStats();
+    _loadBloodGroupDistribution();
+    _loadAnalyticsSummary();
+    _loadMonthlyTrends();
+    _loadVerificationCounts();
   }
 
   // =====================================================================
@@ -7799,9 +9652,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final supervisor = supervisorCtl.text.trim();
               
               if (name.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Please enter a name')),
-                );
+                _showSnack('Please enter a name', isError: true);
                 return;
               }
               
@@ -7825,8 +9676,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
               
               try {
                 if (FirebaseService.initialized) {
+                  // Add to blood_banks collection
                   final doc = await FirebaseFirestore.instance.collection('blood_banks').add(newBank);
                   newBank['id'] = doc.id;
+                  
+                  // Also add to users collection so it shows in overview stats
+                  await FirebaseFirestore.instance.collection('users').add({
+                    'name': name,
+                    'email': '${name.toLowerCase().replaceAll(' ', '_')}@bloodbank.com',
+                    'contact': phone,
+                    'location': location,
+                    'role': 'blood_bank',
+                    'designation': supervisor.isEmpty ? 'Blood Bank' : supervisor,
+                    'approved': true,
+                    'createdAt': FieldValue.serverTimestamp(),
+                  });
                 } else {
                   newBank['id'] = DateTime.now().millisecondsSinceEpoch.toString();
                 }
@@ -7836,16 +9700,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 });
                 await _saveBloodBanks();
                 
+                // Refresh overview stats
+                await _loadStats();
+                
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Blood bank added successfully'), backgroundColor: Colors.green),
-                  );
+                  _showSnack('Blood bank added successfully');
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error adding blood bank: $e'), backgroundColor: Colors.red),
-                  );
+                  _showSnack('Error adding blood bank: $e', isError: true);
                 }
               }
             },
@@ -7952,9 +9815,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final supervisor = supervisorCtl.text.trim();
               
               if (name.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Please enter a name')),
-                );
+                _showSnack('Please enter a name', isError: true);
                 return;
               }
               
@@ -7981,15 +9842,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 await _saveBloodBanks();
                 
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Blood bank updated successfully'), backgroundColor: Colors.green),
-                  );
+                  _showSnack('Blood bank updated successfully');
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error updating blood bank: $e'), backgroundColor: Colors.red),
-                  );
+                  _showSnack('Error updating blood bank: $e', isError: true);
                 }
               }
             },
@@ -8050,15 +9907,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
         await _saveBloodBanks();
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Blood bank deleted successfully'), backgroundColor: Colors.green),
-          );
+          _showSnack('Blood bank deleted successfully');
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting blood bank: $e'), backgroundColor: Colors.red),
-          );
+          _showSnack('Error deleting blood bank: $e', isError: true);
         }
       }
     }
@@ -8152,15 +10005,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 await _saveBloodBanks();
                 
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Inventory updated successfully'), backgroundColor: Colors.green),
-                  );
+                  _showSnack('Inventory updated successfully');
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error updating inventory: $e'), backgroundColor: Colors.red),
-                  );
+                  _showSnack('Error updating inventory: $e', isError: true);
                 }
               }
             },
@@ -8287,12 +10136,12 @@ class _LineGraphPainter extends CustomPainter {
         Offset(points[i].dx - textPainter.width / 2, points[i].dy - 20),
       );
 
-      // Draw month label
+      // Draw month label - smaller font to prevent overflow
       textPainter.text = TextSpan(
         text: months[i],
         style: TextStyle(
           color: Colors.grey[700],
-          fontSize: 10,
+          fontSize: 8,
           fontWeight: FontWeight.w600,
         ),
       );
@@ -8329,5 +10178,172 @@ class _LineGraphPainter extends CustomPainter {
         oldDelegate.months != months ||
         oldDelegate.maxValue != maxValue ||
         oldDelegate.minValue != minValue;
+  }
+}
+
+// Custom Painter for Blood Group Donation Trends Graph
+class _BloodGroupLineGraphPainter extends CustomPainter {
+  final List<double> values;
+  final List<String> months;
+  final double maxValue;
+  final double minValue;
+  final Color color;
+
+  _BloodGroupLineGraphPainter({
+    required this.values,
+    required this.months,
+    required this.maxValue,
+    required this.minValue,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty) return;
+
+    final padding = 40.0;
+    final graphWidth = size.width - (padding * 2);
+    final graphHeight = size.height - (padding * 2);
+
+    // Draw grid
+    final paint = Paint()
+      ..color = Colors.grey.shade300
+      ..strokeWidth = 0.5;
+
+    // Horizontal grid lines
+    for (int i = 0; i <= 4; i++) {
+      final y = padding + (graphHeight * i / 4);
+      canvas.drawLine(
+        Offset(padding, y),
+        Offset(size.width - padding, y),
+        paint,
+      );
+    }
+
+    // Vertical grid lines
+    for (int i = 0; i < values.length; i++) {
+      final x = padding + (graphWidth * i / (values.length - 1));
+      canvas.drawLine(
+        Offset(x, padding),
+        Offset(x, size.height - padding),
+        paint,
+      );
+    }
+
+    // Draw axes
+    final axisPaint = Paint()
+      ..color = Colors.grey.shade700
+      ..strokeWidth = 2;
+
+    canvas.drawLine(
+      Offset(padding, size.height - padding),
+      Offset(size.width - padding, size.height - padding),
+      axisPaint,
+    );
+    canvas.drawLine(
+      Offset(padding, padding),
+      Offset(padding, size.height - padding),
+      axisPaint,
+    );
+
+    // Calculate points
+    final range = maxValue - minValue;
+    final points = <Offset>[];
+
+    for (int i = 0; i < values.length; i++) {
+      final normalizedValue = (values[i] - minValue) / (range > 0 ? range : 1);
+      final x = padding + (graphWidth * i / (values.length - 1));
+      final y = size.height - padding - (graphHeight * normalizedValue);
+      points.add(Offset(x, y));
+    }
+
+    // Draw animated line with gradient
+    final linePaint = Paint()
+      ..color = color
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Draw line through points
+    for (int i = 0; i < points.length - 1; i++) {
+      canvas.drawLine(points[i], points[i + 1], linePaint);
+    }
+
+    // Draw points with circles
+    final pointPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    for (final point in points) {
+      canvas.drawCircle(point, 5, pointPaint);
+      
+      // Draw white center
+      final whitePaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(point, 3, whitePaint);
+    }
+
+    // Draw value labels on points
+    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+
+    for (int i = 0; i < points.length; i++) {
+      textPainter.text = TextSpan(
+        text: '${values[i].toInt()}',
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(points[i].dx - textPainter.width / 2, points[i].dy - 20),
+      );
+
+      // Draw month label - smaller font to prevent overflow
+      textPainter.text = TextSpan(
+        text: months[i],
+        style: TextStyle(
+          color: Colors.grey[700],
+          fontSize: 8,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(points[i].dx - textPainter.width / 2, size.height - padding + 10),
+      );
+    }
+
+    // Draw Y-axis labels
+    for (int i = 0; i <= 4; i++) {
+      final value = maxValue - ((maxValue - minValue) * i / 4);
+      final y = padding + (graphHeight * i / 4);
+      
+      textPainter.text = TextSpan(
+        text: value.toInt().toString(),
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: 10,
+        ),
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(5, y - textPainter.height / 2),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BloodGroupLineGraphPainter oldDelegate) {
+    return oldDelegate.values != values ||
+        oldDelegate.months != months ||
+        oldDelegate.maxValue != maxValue ||
+        oldDelegate.minValue != minValue ||
+        oldDelegate.color != color;
   }
 }

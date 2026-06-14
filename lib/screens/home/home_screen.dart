@@ -57,20 +57,25 @@ class _HomeScreenState extends State<HomeScreen> {
     if (FirebaseService.initialized) return;
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList('demo_users') ?? <String>[];
-    final found = list.any((s) {
+    var found = false;
+    for (var i = 0; i < list.length; i++) {
       try {
-        final Map<String, dynamic> u = jsonDecode(s);
-        return (u['email'] ?? '') == 'superadmin@bloodbridge.app';
+        final Map<String, dynamic> u = jsonDecode(list[i]);
+        if ((u['email'] ?? '') == 'superadmin@bloodbridge.app') {
+          u['password'] = 'SuperAdmin@123';
+          list[i] = jsonEncode(u);
+          found = true;
+          break;
+        }
       } catch (_) {
-        return false;
       }
-    });
+    }
     if (!found) {
       final superAdmin = {
         'id': DateTime.now().millisecondsSinceEpoch.toString(),
         'name': 'Super Admin',
         'email': 'superadmin@bloodbridge.app',
-        'password': 'superadmin',
+        'password': 'SuperAdmin@123',
         'contact': '',
         'bloodGroup': '',
         'role': 'super_admin',

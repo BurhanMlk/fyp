@@ -1,6 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import '../firebase_options.dart';
 
 class FirebaseService {
   /// true when Firebase.initializeApp() completed successfully.
@@ -8,9 +7,7 @@ class FirebaseService {
   /// Initialize Firebase with proper configuration
   static Future<void> init() async {
     try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
+      await Firebase.initializeApp();
       initialized = true;
       print('✅ Firebase initialized successfully on ${kIsWeb ? "web" : "mobile"}');
     } catch (e) {

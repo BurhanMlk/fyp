@@ -94,72 +94,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final verified = data['verified'] == true || verificationStatus == 'approved';
         final bool showDonorBlueTick = role == 'donor' && verified;
 
-        // Build avatar from photoData if present (base64), otherwise default icon
-        Widget avatar;
-        try {
-          final pd = data['photoData'] ?? '';
-          if (pd is String && pd.isNotEmpty) {
-            final bytes = base64Decode(pd);
-            avatar = Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.red[300]!, width: 4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.red.withOpacity(0.3),
-                    blurRadius: 20,
-                    spreadRadius: 5,
-                  ),
-                ],
+        // Always show default avatar since photos are removed from registration
+        Widget avatar = Container(
+          width: 100,
+          height: 100,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.red[300]!, width: 4),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.red.withOpacity(0.3),
+                blurRadius: 20,
+                spreadRadius: 5,
               ),
-              child: CircleAvatar(radius: 46, backgroundImage: MemoryImage(bytes)),
-            );
-          } else {
-            avatar = Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.red[300]!, width: 4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.red.withOpacity(0.3),
-                    blurRadius: 20,
-                    spreadRadius: 5,
-                  ),
-                ],
-              ),
-              child: CircleAvatar(
-                radius: 46,
-                backgroundColor: Colors.red[100],
-                child: Icon(Icons.person, size: 50, color: Colors.red[700]),
-              ),
-            );
-          }
-        } catch (e) {
-          avatar = Container(
-            width: 100,
-            height: 100,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.red[300]!, width: 4),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.red.withOpacity(0.3),
-                  blurRadius: 20,
-                  spreadRadius: 5,
-                ),
-              ],
-            ),
-            child: CircleAvatar(
-              radius: 46,
-              backgroundColor: Colors.red[100],
-              child: Icon(Icons.person, size: 50, color: Colors.red[700]),
-            ),
-          );
-        }
+            ],
+          ),
+          child: CircleAvatar(
+            radius: 46,
+            backgroundColor: Colors.red[100],
+            child: Icon(Icons.person, size: 50, color: Colors.red[700]),
+          ),
+        );
 
         if (showDonorBlueTick) {
           avatar = Stack(
