@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../../services/firebase_service.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
+import '../donors/donor_detail_screen.dart';
 
 class DonorsDetailScreen extends StatefulWidget {
   const DonorsDetailScreen({super.key});
@@ -883,14 +885,10 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
 
       await _loadDonors();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Donor updated successfully')),
-      );
+      showTopSnackBar(context, message: 'Donor updated successfully', backgroundColor: Colors.green);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update donor: $e')),
-      );
+      showTopSnackBar(context, message: 'Failed to update donor: $e', backgroundColor: Colors.red);
     }
   }
 
@@ -946,168 +944,27 @@ class _DonorsDetailScreenState extends State<DonorsDetailScreen> {
 
       await _loadDonors();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Donor deleted successfully')),
-      );
+      showTopSnackBar(context, message: 'Donor deleted successfully', backgroundColor: Colors.green);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete donor: $e')),
-      );
+      showTopSnackBar(context, message: 'Failed to delete donor: $e', backgroundColor: Colors.red);
     }
   }
 
   void _showDonorDetails(Map<String, dynamic> donor) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    final approved = donor['approved'] == true;
+    final email = donor['email'] ?? '';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DonorDetailScreen(
+          donorData: donor,
+          docId: donor['docId']?.toString(),
+          isApproved: approved,
+          canViewContact: true, // Admin can always view contact
+          isAdmin: true,
+        ),
       ),
-      builder: (context) {
-        final name = donor['name'] ?? 'Unknown';
-        final email = donor['email'] ?? '';
-        final bloodGroup = donor['bloodGroup'] ?? 'N/A';
-        final contact = donor['contact'] ?? 'N/A';
-        final location = donor['location'] ?? 'N/A';
-        final lastDonation = donor['lastDonation'] ?? 'Never';
-        final totalDonations = donor['totalDonations'] ?? 0;
-        final availability = donor['availability'] ?? true;
-        final age = donor['age'] ?? 'N/A';
-        final gender = donor['gender'] ?? 'N/A';
-
-        return DraggableScrollableSheet(
-          initialChildSize: 0.75,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          expand: false,
-          builder: (context, scrollController) {
-            return SingleChildScrollView(
-              controller: scrollController,
-              child: Container(
-                padding: EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 20),
-                    
-                    // Header
-                    Row(
-                      children: [
-                        Container(
-                          width: 70,
-                          height: 70,
-                          decoration: BoxDecoration(
-                            color: Colors.red.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.bloodtype, color: Colors.red, size: 32),
-                              Text(
-                                bloodGroup,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                name,
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              SizedBox(height: 4),
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: availability ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  availability ? 'Available' : 'Not Available',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: availability ? Colors.green : Colors.grey,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 24),
-
-                    // Details
-                    _buildDetailRow(Icons.favorite, 'Total Donations', '$totalDonations donations'),
-                    _buildDetailRow(Icons.calendar_today, 'Last Donation', lastDonation.toString()),
-                    _buildDetailRow(Icons.phone, 'Contact', contact),
-                    _buildDetailRow(Icons.email, 'Email', email),
-                    _buildDetailRow(Icons.location_on, 'Location', location),
-                    _buildDetailRow(Icons.person, 'Age', age.toString()),
-                    _buildDetailRow(Icons.wc, 'Gender', gender.toString()),
-
-                    SizedBox(height: 24),
-
-                    // Action Button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Request sent to $name'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          'Send Request',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 

@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 import 'donor_detail_screen.dart';
 
 
@@ -21,16 +22,21 @@ class DonorListScreen extends StatefulWidget {
 class _DonorListScreenState extends State<DonorListScreen> {
   String? _currentEmail;
   String? _currentRole;
+  String? _currentPhone;
   String _searchQuery = '';
   String? _filterBloodType;
   String? _filterLocation;
   bool _filterApprovedOnly = false;
   String _sortBy = 'blood'; // 'blood', 'location', 'recent'
+  bool _hasApprovedDonorAccess = false;
+  bool _isRequestingAccess = false;
+  Set<String> _approvedDonorEmails = {}; // Per-donor approved emails
+  int _reloadCounter = 0; // Increment to force FutureBuilder refresh
 
   @override
   void initState() {
     super.initState();
-    _loadCurrentUser();
+    _loadCurrentUser().then((_) => _checkApprovedAccess());
   }
 
   Future<void> _loadCurrentUser() async {
@@ -40,8 +46,15 @@ class _DonorListScreenState extends State<DonorListScreen> {
       if (u != null) {
         try {
           final snap = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
-          if (snap.exists) setState(() { _currentRole = snap.data()?['role']?.toString(); });
+          if (snap.exists) {
+            final data = snap.data();
+            setState(() {
+              _currentRole = data?['role']?.toString();
+              _currentPhone = data?['contact']?.toString() ?? data?['phone']?.toString();
+            });
+          }
         } catch (_) {}
+        _checkExpiredCooldowns();
       }
     } else {
       final prefs = await SharedPreferences.getInstance();
@@ -51,7 +64,110 @@ class _DonorListScreenState extends State<DonorListScreen> {
         try {
           final me = users.map((s) => jsonDecode(s) as Map<String, dynamic>).firstWhere((u) => (u['email'] ?? '') == (_currentEmail ?? ''), orElse: () => <String, dynamic>{});
           _currentRole = me['role']?.toString();
-        } catch (_) { _currentRole = null; }
+          _currentPhone = me['contact']?.toString() ?? me['phone']?.toString();
+        } catch (_) { _currentRole = null; _currentPhone = null; }
+      });
+      _checkExpiredCooldowns();
+    }
+  }
+
+  Future<void> _checkExpiredCooldowns() async {
+    final now = DateTime.now();
+    if (FirebaseService.initialized) {
+      try {
+        final donorsSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'donor')
+            .get();
+        for (final doc in donorsSnap.docs) {
+          final data = doc.data();
+          final cooldownStr = data['cooldownUntil']?.toString();
+          if (cooldownStr != null && cooldownStr.isNotEmpty) {
+            try {
+              final cooldownDate = DateTime.parse(cooldownStr);
+              if (cooldownDate.isBefore(now)) {
+                // Cooldown expired - clear it
+                await doc.reference.update({'cooldownUntil': FieldValue.delete()});
+                final donorEmail = data['email'] ?? '';
+                final donorName = data['name'] ?? 'Donor';
+                if (donorEmail.isNotEmpty && _currentRole == 'admin' || _currentRole == 'super_admin') {
+                  _showSnack('$donorName cooldown expired! Can donate again.', isSuccess: true);
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final users = prefs.getStringList('demo_users') ?? <String>[];
+      final updatedUsers = <String>[];
+      bool changed = false;
+      for (final s in users) {
+        try {
+          final u = jsonDecode(s) as Map<String, dynamic>;
+          final cooldownStr = u['cooldownUntil']?.toString();
+          if (cooldownStr != null && cooldownStr.isNotEmpty) {
+            try {
+              final cooldownDate = DateTime.parse(cooldownStr);
+              if (cooldownDate.isBefore(now)) {
+                u.remove('cooldownUntil');
+                changed = true;
+                final donorEmail = u['email'] ?? '';
+                final donorName = u['name'] ?? 'Donor';
+                if (donorEmail.isNotEmpty && (_currentRole == 'admin' || _currentRole == 'super_admin')) {
+                  _showSnack('$donorName cooldown expired! Can donate again.', isSuccess: true);
+                }
+              }
+            } catch (_) {}
+          }
+          updatedUsers.add(jsonEncode(u));
+        } catch (_) { updatedUsers.add(s); }
+      }
+      if (changed) {
+        await prefs.setStringList('demo_users', updatedUsers);
+      }
+    }
+  }
+
+  Future<void> _checkApprovedAccess() async {
+    if (_currentEmail == null || _currentEmail!.isEmpty) return;
+    final approvedEmails = <String>{};
+    
+    if (FirebaseService.initialized) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('donor_requests')
+            .get();
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          if (data['type'] == 'donor_access_request' &&
+              data['requesterEmail'] == _currentEmail &&
+              data['status'] == 'approved') {
+            final de = data['donorEmail']?.toString() ?? '';
+            if (de.isNotEmpty) approvedEmails.add(de);
+          }
+        }
+      } catch (_) {}
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final requests = prefs.getStringList('donor_requests') ?? [];
+      for (final r in requests) {
+        try {
+          final req = jsonDecode(r) as Map<String, dynamic>;
+          if (req['type'] == 'donor_access_request' &&
+              req['requesterEmail'] == _currentEmail &&
+              req['status'] == 'approved') {
+            final de = req['donorEmail']?.toString() ?? '';
+            if (de.isNotEmpty) approvedEmails.add(de);
+          }
+        } catch (_) {}
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _approvedDonorEmails = approvedEmails;
+        _hasApprovedDonorAccess = approvedEmails.isNotEmpty;
       });
     }
   }
@@ -64,14 +180,20 @@ class _DonorListScreenState extends State<DonorListScreen> {
     } catch (_) { return null; }
   }
 
+  void _showSnack(String msg, {bool isError = false, bool isSuccess = false}) {
+    if (!mounted) return;
+    final bg = isError ? Colors.red.shade700 : isSuccess ? const Color(0xFFC62828) : const Color(0xFFC62828);
+    showTopSnackBar(context, message: msg, backgroundColor: bg, topOffset: 50);
+  }
+
   Future<void> _openSms(String phone, String body) async {
     final uri = Uri.parse('sms:$phone?body=${Uri.encodeComponent(body)}');
     try {
       if (!await launchUrl(uri)) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open SMS app')));
+        _showSnack('Could not open SMS app', isError: true);
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error opening SMS: $e')));
+      _showSnack('Error opening SMS: $e', isError: true);
     }
   }
 
@@ -273,7 +395,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: locations.map((loc) {
             return RadioListTile<String>(
-              title: Text(loc),
+              title: Text(loc, maxLines: 2, overflow: TextOverflow.ellipsis),
               value: loc,
               groupValue: _filterLocation,
               onChanged: (value) {
@@ -302,9 +424,32 @@ class _DonorListScreenState extends State<DonorListScreen> {
 
   Widget _buildFirebaseList() {
     return FutureBuilder<QuerySnapshot>(
+      key: ValueKey('donors_$_reloadCounter'),
       future: FirebaseFirestore.instance.collection('users').get(),
       builder: (context, snap) {
-        if (!snap.hasData) return const Center(child: BloodBridgeLoader());
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: BloodBridgeLoader());
+        }
+
+        if (snap.hasError) {
+          print('Error loading donors: ${snap.error}');
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
+                const SizedBox(height: 12),
+                Text('Failed to load donors', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
+                const SizedBox(height: 8),
+                TextButton(onPressed: () => setState(() {}), child: const Text('Retry')),
+              ],
+            ),
+          );
+        }
+
+        if (!snap.hasData) {
+          return const Center(child: BloodBridgeLoader());
+        }
         
         var docs = snap.data!.docs.where((d) {
           final data = d.data() as Map<String, dynamic>;
@@ -410,7 +555,8 @@ class _DonorListScreenState extends State<DonorListScreen> {
               donorData: data,
               docId: docId,
               isApproved: approved,
-              canViewContact: _currentRole == 'admin' || _currentRole == 'super_admin' || approved,
+              canViewContact: _currentRole == 'admin' || _currentRole == 'super_admin' || approved || _approvedDonorEmails.contains(data['email']),
+              isAdmin: _currentRole == 'admin' || _currentRole == 'super_admin',
             ),
           ),
         );
@@ -441,13 +587,25 @@ class _DonorListScreenState extends State<DonorListScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (data['verified'] == true)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 4),
+                          child: Icon(Icons.verified, color: Colors.blue, size: 18),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -477,12 +635,42 @@ class _DonorListScreenState extends State<DonorListScreen> {
               ),
             ),
 
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
 
-            // Badges and Button
-            Column(
+            // Badges and Button - constrained to prevent overflow
+            SizedBox(
+              width: 115,
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                // Cooldown timer badge (visible to everyone if donor has active cooldown)
+                Builder(builder: (_) {
+                  final cooldownStr = data['cooldownUntil']?.toString();
+                  if (cooldownStr != null && cooldownStr.isNotEmpty) {
+                    try {
+                      final cooldownDate = DateTime.parse(cooldownStr);
+                      if (cooldownDate.isAfter(DateTime.now())) {
+                        final daysLeft = cooldownDate.difference(DateTime.now()).inDays;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.orange, width: 1),
+                            ),
+                            child: Text(
+                              '⏳ ${daysLeft}d left',
+                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.orange),
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (_) {}
+                  }
+                  return const SizedBox.shrink();
+                }),
                 if (role == 'donor')
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -534,14 +722,16 @@ class _DonorListScreenState extends State<DonorListScreen> {
                       ),
                     ),
                   ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 OutlinedButton(
                   onPressed: () => _handleContact(data, docId),
                   style: OutlinedButton.styleFrom(
                     backgroundColor: Colors.transparent,
                     foregroundColor: Colors.black,
-                    side: BorderSide(color: Colors.black, width: 2),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    side: const BorderSide(color: Colors.black, width: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
                     ),
@@ -549,12 +739,94 @@ class _DonorListScreenState extends State<DonorListScreen> {
                   child: const Text(
                     'Contact',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
+                // Request button for recipients - per donor check
+                if ((_currentRole == 'recipient' || _currentRole == 'user' || _currentRole == 'donor')) ...[
+                  const SizedBox(height: 4),
+                  if (_approvedDonorEmails.contains(data['email']))
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green, width: 1.5)),
+                      child: const Text('Approved ✓', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.green)),
+                    )
+                  else
+                    OutlinedButton(
+                      onPressed: () => _requestDonorDirectly(data),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: const Color(0xFFB71C1C),
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Color(0xFFB71C1C), width: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        minimumSize: const Size(0, 28),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      child: const Text('Request', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+                    ),
+                ],
+                // Approve/Reject/Delete for admin
+                if (_currentRole == 'admin' || _currentRole == 'super_admin') ...[
+                  const SizedBox(height: 4),
+                  if (approved) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green, width: 1.5)),
+                      child: const Text('Approved ✓', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.green)),
+                    ),
+                    const SizedBox(height: 4),
+                    _buildDonateButton(data, docId),
+                  ] else ...[
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      OutlinedButton(
+                        onPressed: () => _approveDonorAccess(data, docId),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.green.shade50,
+                          foregroundColor: Colors.green.shade700,
+                          side: BorderSide(color: Colors.green, width: 1.5),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: const Size(0, 28),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        ),
+                        child: const Text('Approve', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600)),
+                      ),
+                      const SizedBox(width: 4),
+                      OutlinedButton(
+                        onPressed: () => _rejectDonorAccess(data, docId),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.red.shade50,
+                          foregroundColor: Colors.red.shade700,
+                          side: BorderSide(color: Colors.red, width: 1.5),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: const Size(0, 28),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        ),
+                        child: const Text('Reject', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600)),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                    OutlinedButton(
+                      onPressed: () => _deleteDonorRequest(data, docId),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.grey.shade200,
+                        foregroundColor: Colors.black54,
+                        side: const BorderSide(color: Colors.grey, width: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        minimumSize: const Size(0, 22),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      child: const Text('Delete', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w500)),
+                    ),
+                  ],
+                ],
               ],
+            ),
             ),
           ],
         ),
@@ -600,6 +872,567 @@ class _DonorListScreenState extends State<DonorListScreen> {
     );
   }
 
+  void _requestDonorDirectly(Map<String, dynamic> donor) {
+    // Check if donor is in cooldown period
+    final cooldownUntil = donor['cooldownUntil']?.toString();
+    if (cooldownUntil != null && cooldownUntil.isNotEmpty) {
+      try {
+        final cooldownDate = DateTime.parse(cooldownUntil);
+        if (cooldownDate.isAfter(DateTime.now())) {
+          final daysLeft = cooldownDate.difference(DateTime.now()).inDays;
+          final nextDate = '${cooldownDate.day}/${cooldownDate.month}/${cooldownDate.year}';
+          _showSnack(
+            'This donor recently donated blood. Available again on $nextDate (${daysLeft} days left)',
+            isError: true,
+          );
+          return;
+        }
+      } catch (_) {}
+    }
+
+    _submitDonorAccessRequest(
+      donorEmail: donor['email'] ?? '',
+      donorName: donor['name'] ?? '',
+      reason: 'Requesting donor contact access',
+      phone: _currentPhone ?? 'N/A',
+      hospital: '',
+    );
+  }
+
+  void _showRequestDonorAccessDialog(Map<String, dynamic> donor) {
+    final reasonCtl = TextEditingController();
+    final phoneCtl = TextEditingController();
+    final hospitalCtl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.fact_check_rounded, color: const Color(0xFFB71C1C)),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'Request Donor Access',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Color(0xFFB71C1C), size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Your request will be sent to admin for approval. Once approved, you can view donor contact details.',
+                        style: TextStyle(fontSize: 12, color: Color(0xFFB71C1C)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: reasonCtl,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Reason for Request *',
+                  hintText: 'Explain why you need donor access...',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneCtl,
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  labelText: 'Your Phone Number *',
+                  prefixIcon: const Icon(Icons.phone, size: 20),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: hospitalCtl,
+                decoration: InputDecoration(
+                  labelText: 'Hospital (Optional)',
+                  prefixIcon: const Icon(Icons.local_hospital, size: 20),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final reason = reasonCtl.text.trim();
+              final phone = phoneCtl.text.trim();
+
+              if (reason.isEmpty || phone.isEmpty) {
+                _showSnack('Please fill all required fields', isError: true);
+                return;
+              }
+
+              Navigator.pop(ctx);
+              await _submitDonorAccessRequest(
+                donorEmail: donor['email'] ?? '',
+                donorName: donor['name'] ?? '',
+                reason: reason,
+                phone: phone,
+                hospital: hospitalCtl.text.trim(),
+              );
+            },
+            icon: const Icon(Icons.send, size: 18),
+            label: const Text('Submit Request'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB71C1C),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submitDonorAccessRequest({
+    required String reason,
+    required String phone,
+    required String hospital,
+    required String donorEmail,
+    required String donorName,
+  }) async {
+    setState(() => _isRequestingAccess = true);
+
+    final request = {
+      'type': 'donor_access_request',
+      'requesterEmail': _currentEmail,
+      'requesterPhone': phone,
+      'donorEmail': donorEmail,
+      'donorName': donorName,
+      'reason': reason,
+      'hospital': hospital,
+      'status': 'pending',
+      'requestedAt': DateTime.now().toIso8601String(),
+    };
+
+    if (FirebaseService.initialized) {
+      try {
+        await FirebaseFirestore.instance.collection('donor_requests').add(request);
+        if (mounted) {
+          _showSnack('Request sent to admin for approval!', isSuccess: true);
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnack('Error: $e', isError: true);
+        }
+      }
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final requests = prefs.getStringList('donor_requests') ?? [];
+      requests.add(jsonEncode(request));
+      await prefs.setStringList('donor_requests', requests);
+      if (mounted) {
+        _showSnack('Request sent (Demo mode)!', isSuccess: true);
+      }
+    }
+
+    if (mounted) {
+      setState(() => _isRequestingAccess = false);
+      _checkApprovedAccess(); // Refresh per-donor approved list
+    }
+  }
+
+  Future<void> _approveDonorAccess(Map<String, dynamic> donor, String? docId) async {
+    try {
+      if (FirebaseService.initialized && docId != null) {
+        await FirebaseFirestore.instance.collection('users').doc(docId).update({'approved': true, 'verified': true});
+      } else {
+        // Demo mode: update donor in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final donorEmail = donor['email'] ?? '';
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['approved'] = true;
+              u['verified'] = true;
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
+      _showSnack('Donor approved!', isSuccess: true);
+      setState(() { _reloadCounter++; });
+    } catch (e) {
+      _showSnack('Error: $e', isError: true);
+    }
+  }
+
+  Future<void> _rejectDonorAccess(Map<String, dynamic> donor, String? docId) async {
+    try {
+      if (FirebaseService.initialized && docId != null) {
+        await FirebaseFirestore.instance.collection('users').doc(docId).update({'approved': false});
+      } else {
+        // Demo mode: update donor in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final donorEmail = donor['email'] ?? '';
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['approved'] = false;
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
+      _showSnack('Donor rejected!', isError: true);
+      setState(() { _reloadCounter++; });
+    } catch (e) {
+      _showSnack('Error: $e', isError: true);
+    }
+  }
+
+  Future<void> _deleteDonorRequest(Map<String, dynamic> donor, String? docId) async {
+    final donorName = donor['name'] ?? 'Unknown';
+    final donorEmail = donor['email'] ?? '';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Donor Request?'),
+        content: Text('This will remove $donorName\'s approval status and all pending requests. They will become available for new requests again.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      if (FirebaseService.initialized && docId != null) {
+        // Reset donor to unapproved state
+        await FirebaseFirestore.instance.collection('users').doc(docId).update({
+          'approved': false,
+          'verified': false,
+        });
+        // Remove cooldown if present
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(docId).update({
+            'cooldownUntil': FieldValue.delete(),
+            'lastDonation': FieldValue.delete(),
+          });
+        } catch (_) {}
+      } else {
+        // Demo mode
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['approved'] = false;
+              u['verified'] = false;
+              u.remove('cooldownUntil');
+              u.remove('lastDonation');
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
+
+      _showSnack('Donor request deleted! Available for new requests.', isSuccess: true);
+      setState(() { _reloadCounter++; });
+    } catch (e) {
+      _showSnack('Error: $e', isError: true);
+    }
+  }
+
+  Widget _buildDonateButton(Map<String, dynamic> data, String? docId) {
+    final donorEmail = data['email'] ?? '';
+    final cooldownUntil = data['cooldownUntil']?.toString();
+
+    if (cooldownUntil != null && cooldownUntil.isNotEmpty) {
+      try {
+        final cooldownDate = DateTime.parse(cooldownUntil);
+        if (cooldownDate.isAfter(DateTime.now())) {
+          final daysLeft = cooldownDate.difference(DateTime.now()).inDays;
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange, width: 1),
+            ),
+            child: Text(
+              '⏳ ${daysLeft}d left',
+              style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: Colors.orange),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+
+    return OutlinedButton(
+      onPressed: () => _donateToDonor(data, docId),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.blue.shade50,
+        foregroundColor: Colors.blue.shade700,
+        side: const BorderSide(color: Colors.blue, width: 1.5),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        minimumSize: const Size(0, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      child: const Text('Donate', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600)),
+    );
+  }
+
+  Future<void> _donateToDonor(Map<String, dynamic> donor, String? docId) async {
+    final donorName = donor['name'] ?? 'Unknown';
+    final donorEmail = donor['email'] ?? '';
+    final bloodGroup = donor['bloodGroup'] ?? '';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Donation'),
+        content: Text('Mark that $donorName ($bloodGroup) has donated blood?\\n\\nThis will:\\n• Add 100 points to their profile\\n• Generate e-certificate eligibility\\n• Start 3-month cooldown'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFD32F2F)),
+            child: const Text('Confirm Donation', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final now = DateTime.now();
+    final cooldownUntil = now.add(const Duration(days: 90)); // 3 months
+    final donationRecord = {
+      'donorEmail': donorEmail,
+      'donorName': donorName,
+      'bloodGroup': bloodGroup,
+      'donatedAt': now.toIso8601String(),
+      'cooldownUntil': cooldownUntil.toIso8601String(),
+      'adminEmail': _currentEmail,
+    };
+
+    if (FirebaseService.initialized && docId != null) {
+      try {
+        // Update donor with cooldown
+        await FirebaseFirestore.instance.collection('users').doc(docId).update({
+          'cooldownUntil': cooldownUntil.toIso8601String(),
+          'lastDonation': now.toIso8601String(),
+          'donationCount': FieldValue.increment(1),
+          'hasDonated': true,
+        });
+
+        // Save donation record
+        await FirebaseFirestore.instance.collection('donations').add(donationRecord);
+
+        // Schedule 3-month eligibility reminder
+        final reminderMessage = '🎉 *You Can Donate Blood Again!* 🎉\n\n'
+            'Dear $donorName,\n\n'
+            'Your 3-month waiting period is now complete. You are eligible to donate blood again!\n\n'
+            'With gratitude,\n'
+            '*Quaidian Society of Blood Donors / Blood Bridge* ❤️';
+        await FirebaseFirestore.instance.collection('donation_reminders').add({
+          'donorEmail': donorEmail,
+          'donorName': donorName,
+          'message': reminderMessage,
+          'sendAt': Timestamp.fromDate(cooldownUntil),
+          'sent': false,
+          'createdAt': Timestamp.fromDate(now),
+          'donationRequestId': 'direct_${docId}_${now.millisecondsSinceEpoch}',
+        });
+
+        // Send thank-you in-app message to donor
+        final thankYouMsg = '🩸 *Thank You for Your Donation!* 🩸\n\n'
+            'Dear $donorName,\n\n'
+            'Your blood donation has been recorded. You have helped save a life today!\n\n'
+            '📅 *Next Eligible:* ${cooldownUntil.day}/${cooldownUntil.month}/${cooldownUntil.year}\n'
+            '⏳ 90-day cooldown activated.\n\n'
+            'With gratitude,\n'
+            '*Quaidian Society of Blood Donors / Blood Bridge* ❤️';
+        try {
+          final convId = 'conv_${donorEmail.replaceAll('.', '_').replaceAll('@', '_at_')}_admin';
+          final ts = Timestamp.fromDate(now);
+          await FirebaseFirestore.instance.collection('messages').add({
+            'conversationId': convId,
+            'from': 'Admin',
+            'to': donorEmail,
+            'message': thankYouMsg,
+            'sentAt': ts,
+            'type': 'donation_thanks',
+            'read': false,
+          });
+          await FirebaseFirestore.instance.collection('chats').doc(convId).set({
+            'conversationId': convId,
+            'participants': [donorEmail, 'Admin'],
+            'participantNames': [donorName, 'Admin'],
+            'lastMessage': thankYouMsg,
+            'lastMessageAt': ts,
+            'lastMessageFrom': 'Admin',
+            'status': 'active',
+            'unreadCount': 0,
+            'updatedAt': ts,
+          }, SetOptions(merge: true));
+        } catch (_) {}
+
+        // Update gamification points
+        await _addDonationPoints(donorEmail, donorName);
+
+        // Show thank-you popup
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.favorite, color: Colors.red, size: 28),
+                  SizedBox(width: 8),
+                  Text('Donation Recorded! 🩸', style: TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Text(
+                'Thank you, $donorName ($bloodGroup)!\n\n'
+                'Your donation has been recorded.\n\n'
+                '📅 Cooldown until: ${cooldownUntil.day}/${cooldownUntil.month}/${cooldownUntil.year}\n'
+                '⏳ 90 days remaining\n'
+                '⭐ +100 points awarded!',
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                  child: const Text('OK', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        }
+      } catch (e) {
+        _showSnack('Error: $e', isError: true);
+        return;
+      }
+    } else {
+      // Demo mode
+      final prefs = await SharedPreferences.getInstance();
+      final users = prefs.getStringList('demo_users') ?? <String>[];
+      final updatedUsers = users.map((s) {
+        try {
+          final u = jsonDecode(s) as Map<String, dynamic>;
+          if ((u['email'] ?? '') == donorEmail) {
+            u['cooldownUntil'] = cooldownUntil.toIso8601String();
+            u['lastDonation'] = now.toIso8601String();
+            u['donationCount'] = (u['donationCount'] ?? 0) + 1;
+          }
+          return jsonEncode(u);
+        } catch (_) { return s; }
+      }).toList();
+      await prefs.setStringList('demo_users', updatedUsers);
+
+      // Save donation record
+      final donations = prefs.getStringList('donations') ?? [];
+      donations.add(jsonEncode(donationRecord));
+      await prefs.setStringList('donations', donations);
+
+      // Update points
+      await _addDonationPoints(donorEmail, donorName);
+    }
+
+    _showSnack('$donorName donated! +100 points, 3-month cooldown started', isSuccess: true);
+    setState(() { _reloadCounter++; });
+  }
+
+  Future<void> _addDonationPoints(String email, String name) async {
+    if (FirebaseService.initialized) {
+      try {
+        // Update or create gamification document
+        final snap = await FirebaseFirestore.instance
+            .collection('gamification')
+            .where('email', isEqualTo: email)
+            .limit(1)
+            .get();
+        if (snap.docs.isNotEmpty) {
+          await snap.docs.first.reference.update({
+            'points': FieldValue.increment(100),
+            'donations': FieldValue.increment(1),
+            'certificateEligible': true,
+          });
+        } else {
+          await FirebaseFirestore.instance.collection('gamification').add({
+            'email': email,
+            'name': name,
+            'points': 100,
+            'donations': 1,
+            'certificateEligible': true,
+          });
+        }
+      } catch (_) {}
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final lb = prefs.getStringList('leaderboard') ?? [];
+      bool found = false;
+      final updated = lb.map((s) {
+        try {
+          final m = jsonDecode(s) as Map<String, dynamic>;
+          if ((m['email'] ?? '') == email) {
+            found = true;
+            m['score'] = (m['score'] ?? 0) + 100;
+            return jsonEncode(m);
+          }
+        } catch (_) {}
+        return s;
+      }).toList();
+      if (!found) {
+        updated.add(jsonEncode({'name': name, 'email': email, 'score': 100}));
+      }
+      await prefs.setStringList('leaderboard', updated);
+    }
+  }
+
   void _handleContact(Map<String, dynamic> data, String? docId) {
     final approved = data['approved'] == true;
     final contact = data['contact'] ?? 'No contact';
@@ -607,12 +1440,12 @@ class _DonorListScreenState extends State<DonorListScreen> {
     final bloodGroup = data['bloodGroup'] ?? '';
     final location = data['location'] ?? '';
 
-    if (!approved && _currentRole != 'admin' && _currentRole != 'super_admin') {
+    if (!approved && _currentRole != 'admin' && _currentRole != 'super_admin' && !_approvedDonorEmails.contains(data['email'])) {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Not Approved'),
-          content: const Text('This donor is not yet approved. Contact information is only available for approved donors.'),
+          title: const Text('Access Restricted'),
+          content: const Text('Contact information is only available after admin approval. Use the "Request for Donor" button to request access.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -737,6 +1570,7 @@ class _DonorListScreenState extends State<DonorListScreen> {
 
   Widget _buildDemoList() {
     return FutureBuilder<List<String>>(
+      key: ValueKey('donors_demo_$_reloadCounter'),
       future: SharedPreferences.getInstance().then((p) => p.getStringList('demo_users') ?? <String>[]),
       builder: (context, snap) {
         if (!snap.hasData) return const Center(child: BloodBridgeLoader());

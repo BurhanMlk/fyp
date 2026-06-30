@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/firebase_service.dart';
+import '../../widgets/top_snackbar.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'leaderboard_screen.dart';
 
@@ -88,7 +89,7 @@ class GamificationScreen extends StatelessWidget {
                               style: ElevatedButton.styleFrom(backgroundColor: Colors.red, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                               onPressed: () async {
                                 await _ensureDemoAchievements();
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Achievements synced locally')));
+                                showTopSnackBar(context, message: 'Achievements synced locally', backgroundColor: Colors.green);
                               },
                               child: const Text('Sync Achievements', style: TextStyle(fontSize: 16)),
                             ),

@@ -6,6 +6,7 @@ import '../../services/firebase_service.dart';
 import '../../widgets/blood_bridge_loader.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import '../../widgets/top_snackbar.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? demoData;
@@ -264,9 +265,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 icon: Icon(Icons.copy, size: 20),
                                                 onPressed: () {
                                                   Clipboard.setData(ClipboardData(text: c));
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    SnackBar(content: Text('Copied $c')),
-                                                  );
+                                                  showTopSnackBar(context, message: 'Copied $c', backgroundColor: Colors.green);
                                                 },
                                               ),
                                               IconButton(

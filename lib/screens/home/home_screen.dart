@@ -24,6 +24,9 @@ class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
   bool _isSuperAdmin = false;
   String? _currentRole;
+  String? _currentEmail;
+  bool _pendingBadge = false;
+  bool _badgeCheckScheduled = false;
 
   List<Widget> get _tabs {
     if (_currentRole == 'donor') {
@@ -39,6 +42,56 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _ensureDemoSuperAdmin();
     _determineRole();
+  }
+
+  Future<void> _checkPendingBadge() async {
+    final prefs = await SharedPreferences.getInstance();
+    final email = _currentEmail;
+    if (email == null) return;
+    
+    bool hasUpdates = false;
+    
+    if (FirebaseService.initialized) {
+      try {
+        final snap = await FirebaseFirestore.instance.collection('donor_requests').get();
+        final lastSeen = prefs.getString('last_seen_requests_$email') ?? '';
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          if ((data['recipientEmail'] == email || data['requesterEmail'] == email || data['donorEmail'] == email) &&
+              data['status'] != 'pending') {
+            final updatedAt = (data['updatedAt'] ?? data['requestedAt'] ?? '').toString();
+            if (updatedAt.compareTo(lastSeen) > 0) {
+              hasUpdates = true;
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+    } else {
+      final raw = prefs.getStringList('donor_requests') ?? [];
+      final lastSeen = prefs.getString('last_seen_requests_$email') ?? '';
+      for (final s in raw) {
+        try {
+          final r = jsonDecode(s) as Map<String, dynamic>;
+          if ((r['recipientEmail'] == email || r['requesterEmail'] == email || r['donorEmail'] == email) &&
+              r['status'] != 'pending') {
+            final updatedAt = (r['updatedAt'] ?? r['requestedAt'] ?? '').toString();
+            if (updatedAt.compareTo(lastSeen) > 0) {
+              hasUpdates = true;
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    if (_pendingBadge != hasUpdates) {
+      setState(() => _pendingBadge = hasUpdates);
+    }
+  }
+  // Re-check when returning to the app (e.g. after closing PendingRequests)
+  void _refreshBadge() {
+    _badgeCheckScheduled = false;
+    _checkPendingBadge();
   }
 
   // Navigate to admin dashboard if superadmin
@@ -95,12 +148,36 @@ class _HomeScreenState extends State<HomeScreen> {
       if (user == null) return setState(() => _isSuperAdmin = false);
       try {
         final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-        final role = doc.data()?['role'] ?? '';
+        var role = doc.data()?['role'] ?? '';
+        // If the signed-in user email matches the hardcoded superadmin, force the role.
+        if ((user.email ?? '') == 'superadmin@bloodbridge.app') {
+          role = 'super_admin';
+          try {
+            if (doc.exists) {
+              await FirebaseFirestore.instance.collection('users').doc(user.uid).update({'role': 'super_admin', 'approved': true});
+            } else {
+              await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+                'name': 'Super Admin',
+                'email': user.email,
+                'contact': '+92-300-1234567',
+                'bloodGroup': 'O+',
+                'role': 'super_admin',
+                'location': 'Islamabad, Pakistan',
+                'createdAt': FieldValue.serverTimestamp(),
+                'approved': true,
+                'isDonor': false,
+              });
+            }
+          } catch (_) {}
+        }
+
         setState(() {
           _currentRole = role;
+          _currentEmail = user.email;
           _isSuperAdmin = role == 'super_admin';
         });
         if (role == 'super_admin') _checkAndNavigateToAdmin();
+        _checkPendingBadge();
       } catch (_) {
         setState(() {
           _currentRole = null;
@@ -120,9 +197,11 @@ class _HomeScreenState extends State<HomeScreen> {
             final isSuperAdmin = role == 'super_admin';
             setState(() {
               _currentRole = role;
+              _currentEmail = email;
               _isSuperAdmin = isSuperAdmin;
             });
             if (isSuperAdmin) _checkAndNavigateToAdmin();
+            _checkPendingBadge();
             return;
           }
         } catch (_) {}
@@ -133,10 +212,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Check badge once per drawer open via post-frame callback (debounced)
+    if (!_badgeCheckScheduled) {
+      _badgeCheckScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _badgeCheckScheduled = false;
+        if (mounted) _checkPendingBadge();
+      });
+    }
     return WillPopScope(
       onWillPop: () async => false,
       child: Scaffold(
         appBar: AppBar(
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.menu, color: Colors.white),
+                if (_pendingBadge)
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(
+                        color: Colors.black,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            onPressed: () {
+              _checkPendingBadge();
+              Scaffold.of(ctx).openDrawer();
+            },
+          ),
+        ),
         title: Text(
           'Blood Bridge',
           style: TextStyle(
@@ -206,11 +320,18 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               leading: Icon(Icons.pending_actions, color: Color(0xFFFFB74D)),
               title: Text('Pending Requests'),
+              trailing: _pendingBadge
+                  ? Container(
+                      width: 10, height: 10,
+                      decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle),
+                    )
+                  : null,
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => PendingRequestsScreen()),
-                );
+                ).then((_) => _refreshBadge());
+                setState(() => _pendingBadge = false);
               },
             ),
             ListTile(

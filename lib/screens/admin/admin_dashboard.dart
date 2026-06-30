@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:io' as io;
 import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/firebase_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 import 'user_profile_screen.dart';
+import 'document_verification_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../auth/login_screen.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -56,7 +61,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
   int _verifiedRecipientsCount = 0;
   int _pendingVerificationCount = 0;
   
-  // Communication Module Data
+  // AI Matching state
+  String? _aiSelectedBloodGroup;
+  List<Map<String, dynamic>> _aiMatchedDonors = [];
+  bool _aiIsMatching = false;
+  bool _aiHasSearched = false;
   List<Map<String, dynamic>> _activeChats = [];
   List<Map<String, dynamic>> _messagesToday = [];
   List<Map<String, dynamic>> _broadcastHistory = [];
@@ -70,6 +79,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Map<String, dynamic>? _selectedMessage; // For responding to messages
   String _allDonorsSearchQuery = '';
   String _userRegistrationSearchQuery = '';
+
+  // Donation Reminders & History
+  List<Map<String, dynamic>> _donationReminders = [];
+  List<Map<String, dynamic>> _donationHistory = [];
+  bool _isLoadingReminders = true;
 
   @override
   void initState() {
@@ -90,30 +104,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
         _loadMonthlyTrends();
         _loadCommunicationData();
         _loadVerificationCounts();
+        _loadReminders();
+        _checkAndSendDueReminders();
       }
     });
   }
 
   void _showSnack(String message, {bool isError = false, bool isWarning = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    // All popups show in red color
-    Color bg = Colors.red.shade700;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: TextStyle(color: Colors.white)),
-        backgroundColor: bg,
-        duration: Duration(seconds: 3),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: 16,
-          right: 16,
-          left: MediaQuery.of(context).size.width * 0.4,
-          bottom: MediaQuery.of(context).size.height - 120,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    showTopSnackBar(context, message: message, backgroundColor: Colors.red.shade700);
   }
 
   // Guard: if not super_admin, redirect back (demo & Firebase)
@@ -820,7 +819,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         content: SizedBox(
           width: 300,
           child: Text(
-            'Are you sure you want to delete ALL messages from today? This action cannot be undone.',
+            'Are you sure you want to delete ALL messages? This action cannot be undone.',
             style: TextStyle(fontSize: 14),
           ),
         ),
@@ -876,7 +875,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               // Close loading dialog
               if (mounted) {
                 Navigator.pop(context);
-                _showSnack('✅ All messages deleted successfully!');
+                _showSnack('All messages deleted successfully!');
               }
             },
           ),
@@ -889,14 +888,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _deleteAllMessages() async {
     if (FirebaseService.initialized) {
       try {
-        final today = DateTime.now();
-        final startOfDay = Timestamp.fromDate(
-            DateTime(today.year, today.month, today.day));
-
-        // Get all messages from today
+        // Get ALL messages (not just today)
         final messagesSnap = await FirebaseFirestore.instance
             .collection('messages')
-            .where('sentAt', isGreaterThanOrEqualTo: startOfDay)
+            .limit(500)
             .get();
 
         if (messagesSnap.docs.isEmpty) {
@@ -904,7 +899,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           return;
         }
 
-        // Hard delete — actually remove documents using batch
+        // Delete in batches of 500
         final batch = FirebaseFirestore.instance.batch();
         for (final doc in messagesSnap.docs) {
           batch.delete(doc.reference);
@@ -918,7 +913,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         return;
       }
     } else {
-      // Demo mode - clear today's messages
+      // Demo mode - clear all messages
       setState(() {
         _messagesToday.clear();
       });
@@ -926,6 +921,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     
     // Reload communication data to refresh the UI
     await _loadCommunicationData();
+    if (mounted) setState(() {});
   }
 
   void _showEditMessageDialog(Map<String, dynamic> message) {
@@ -1088,17 +1084,361 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _deleteMessage(String messageId) async {
     if (FirebaseService.initialized) {
       try {
-        // Hard delete — actually remove the document
         await FirebaseFirestore.instance
             .collection('messages')
             .doc(messageId)
             .delete();
       } catch (e) {
         _showSnack('Error: $e', isError: true);
+        return;
       }
     }
     await _loadCommunicationData();
-    setState(() {});
+    if (mounted) setState(() {});
+  }
+
+  // ============================================================
+  // Chat Delete Functions
+  // ============================================================
+  void _confirmDeleteChat(Map<String, dynamic> chat, int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text('Delete Chat', overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+        content: Text('Are you sure you want to delete this chat? This action cannot be undone.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete),
+            label: Text('Delete'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              await _deleteChat(chat['id'] ?? '', index);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteChat(String chatId, int index) async {
+    // Remove from local list instantly for fast UI
+    if (index < _activeChats.length) {
+      setState(() => _activeChats.removeAt(index));
+    }
+    _showSnack('Chat deleted');
+    // Firebase delete in background
+    if (FirebaseService.initialized) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('chats')
+            .doc(chatId)
+            .delete();
+      } catch (e) {
+        // Silent fail - already removed from UI
+      }
+    }
+  }
+
+  void _confirmDeleteAllChats() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red, size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Delete All Chats',
+                style: TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 300,
+          child: Text(
+            'Are you sure you want to delete ALL chats? This action cannot be undone.',
+            style: TextStyle(fontSize: 14),
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            child: Text('Cancel', style: TextStyle(fontSize: 14)),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete_sweep, size: 18),
+            label: Text('Delete All', style: TextStyle(fontSize: 14)),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              // Clear local list instantly
+              setState(() => _activeChats.clear());
+              _showSnack('All chats deleted');
+              // Firebase delete in background
+              if (FirebaseService.initialized) {
+                try {
+                  final chatsSnap = await FirebaseFirestore.instance
+                      .collection('chats')
+                      .limit(500)
+                      .get();
+                  if (chatsSnap.docs.isNotEmpty) {
+                    final batch = FirebaseFirestore.instance.batch();
+                    for (final doc in chatsSnap.docs) {
+                      batch.delete(doc.reference);
+                    }
+                    await batch.commit();
+                  }
+                } catch (_) {}
+              }
+            },
+          ),
+        ],
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+      ),
+    );
+  }
+
+  Future<void> _deleteAllChats() async {
+    // Local list already cleared by caller - just do Firebase cleanup
+    if (FirebaseService.initialized) {
+      try {
+        final chatsSnap = await FirebaseFirestore.instance
+            .collection('chats')
+            .limit(500)
+            .get();
+        if (chatsSnap.docs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in chatsSnap.docs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+        }
+      } catch (_) {}
+    }
+  }
+
+  // ============================================================
+  // Broadcast Delete Functions
+  // ============================================================
+  void _confirmDeleteBroadcast(Map<String, dynamic> broadcast, int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text('Delete Broadcast', overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+        content: Text('Are you sure you want to delete this broadcast? This action cannot be undone.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete),
+            label: Text('Delete'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              await _deleteBroadcast(broadcast['id'] ?? '', index);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteBroadcast(String broadcastId, int index) async {
+    // Remove from local list instantly for fast UI
+    if (index < _broadcastHistory.length) {
+      setState(() => _broadcastHistory.removeAt(index));
+    }
+    _showSnack('Broadcast deleted');
+    // Firebase delete in background
+    if (FirebaseService.initialized) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('broadcasts')
+            .doc(broadcastId)
+            .delete();
+      } catch (_) {}
+    }
+  }
+
+  void _confirmDeleteAllBroadcasts() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red, size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Delete All Broadcasts',
+                style: TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 300,
+          child: Text(
+            'Are you sure you want to delete ALL broadcasts? This action cannot be undone.',
+            style: TextStyle(fontSize: 14),
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            child: Text('Cancel', style: TextStyle(fontSize: 14)),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.delete_sweep, size: 18),
+            label: Text('Delete All', style: TextStyle(fontSize: 14)),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.red,
+              side: BorderSide(color: Colors.red, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              // Clear local list instantly
+              setState(() => _broadcastHistory.clear());
+              _showSnack('All broadcasts deleted');
+              // Firebase delete in background
+              if (FirebaseService.initialized) {
+                try {
+                  final broadcastsSnap = await FirebaseFirestore.instance
+                      .collection('broadcasts')
+                      .limit(500)
+                      .get();
+                  if (broadcastsSnap.docs.isNotEmpty) {
+                    final batch = FirebaseFirestore.instance.batch();
+                    for (final doc in broadcastsSnap.docs) {
+                      batch.delete(doc.reference);
+                    }
+                    await batch.commit();
+                  }
+                } catch (_) {}
+              }
+            },
+          ),
+        ],
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+      ),
+    );
+  }
+
+  Future<void> _deleteAllBroadcasts() async {
+    // Local list already cleared by caller - just do Firebase cleanup
+    if (FirebaseService.initialized) {
+      try {
+        final broadcastsSnap = await FirebaseFirestore.instance
+            .collection('broadcasts')
+            .limit(500)
+            .get();
+        if (broadcastsSnap.docs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in broadcastsSnap.docs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+        }
+      } catch (_) {}
+    }
   }
 
   void _confirmDeleteAllDonors() {
@@ -1436,6 +1776,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         return 'Gamification & Engagement';
       case 'verification':
         return 'Donor Verification & Reputation';
+      case 'document_verification':
+        return 'Document Verification';
       case 'hospital_bank':
         return 'Blood Bank Management';
       case 'analytics':
@@ -1449,17 +1791,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Drawer _buildDrawer() {
     return Drawer(
+      backgroundColor: Colors.white.withOpacity(0.92),
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
           Container(
             padding: EdgeInsets.fromLTRB(16, 48, 16, 16),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFFD32F2F), Color(0xFFE57373)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              color: Colors.white.withOpacity(0.85),
+              border: Border(bottom: BorderSide(color: Colors.black, width: 2)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1468,15 +1808,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   width: 80,
                   height: 80,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Colors.transparent,
                     borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
+                    border: Border.all(color: Colors.black, width: 2),
                   ),
                   padding: EdgeInsets.all(8),
                   child: ClipRRect(
@@ -1489,8 +1823,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ),
                 SizedBox(height: 12),
-                Text('Admin Panel', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                Text('Blood Bridge Management', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Text('Admin Panel', style: TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('Blood Bridge Management', style: TextStyle(color: Colors.black54, fontSize: 12)),
               ],
             ),
           ),
@@ -1498,17 +1832,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
             dense: true,
             visualDensity: VisualDensity.compact,
             leading: Icon(Icons.dashboard, size: 20, color: _currentModule == 'overview' ? Color(0xFFD32F2F) : Colors.grey),
-            title: Text('Overview', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'overview' ? FontWeight.bold : FontWeight.normal)),
+            title: Text('Overview', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'overview' ? FontWeight.bold : FontWeight.normal, color: Colors.black)),
             selected: _currentModule == 'overview',
             onTap: () {
               setState(() => _currentModule = 'overview');
               Navigator.pop(context);
             },
           ),
-          Divider(height: 1),
+          Divider(height: 1, color: Colors.black, thickness: 1),
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text('ADMIN INBOX', style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.bold)),
+            child: Text('ADMIN INBOX', style: TextStyle(fontSize: 10, color: Colors.black54, fontWeight: FontWeight.bold)),
           ),
           // Quick Access: All Donors
           ListTile(
@@ -1546,10 +1880,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Navigator.pop(context);
             },
           ),
-          Divider(height: 1),
+          Divider(height: 1, color: Colors.black, thickness: 1),
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text('MODULES', style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.bold)),
+            child: Text('MODULES', style: TextStyle(fontSize: 10, color: Colors.black54, fontWeight: FontWeight.bold)),
           ),
           // M1: User Registration & Profile Management
           ListTile(
@@ -1584,6 +1918,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
             selected: _currentModule == 'donation_history',
             onTap: () {
               setState(() => _currentModule = 'donation_history');
+              _loadReminders();
+              _checkAndSendDueReminders();
               Navigator.pop(context);
             },
           ),
@@ -1623,6 +1959,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Navigator.pop(context);
             },
           ),
+          // M6.5: Document Verification Module
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Icon(Icons.description, size: 20, color: _currentModule == 'document_verification' ? Color(0xFFD32F2F) : Colors.grey),
+            title: Text('Document Verification', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'document_verification' ? FontWeight.bold : FontWeight.normal)),
+            selected: _currentModule == 'document_verification',
+            onTap: () {
+              setState(() => _currentModule = 'document_verification');
+              Navigator.pop(context);
+            },
+          ),
           // M7: Hospital / Blood Bank Management
           ListTile(
             dense: true,
@@ -1659,10 +2007,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Navigator.pop(context);
             },
           ),
-          Divider(height: 1),
+          Divider(height: 1, color: Colors.black, thickness: 1),
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text('SETTINGS', style: TextStyle(fontSize: 10, color: Colors.grey[600], fontWeight: FontWeight.bold)),
+            child: Text('SETTINGS', style: TextStyle(fontSize: 10, color: Colors.black54, fontWeight: FontWeight.bold)),
           ),
           ListTile(
             dense: true,
@@ -1675,7 +2023,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Navigator.pop(context);
             },
           ),
-          Divider(height: 1),
+          Divider(height: 1, color: Colors.black, thickness: 1),
           ListTile(
             dense: true,
             visualDensity: VisualDensity.compact,
@@ -1724,6 +2072,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         return _buildGamificationModule();
       case 'verification':
         return _buildVerificationModule();
+      case 'document_verification':
+        return _buildDocumentVerificationModule();
       case 'hospital_bank':
         return _buildHospitalBankModule();
       case 'analytics':
@@ -1743,10 +2093,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
         children: [
           Text('Overview', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF424242))),
           const SizedBox(height: 8),
+          
+          // Stats in Center Wrap - Original Style
           Center(
             child: Wrap(
               alignment: WrapAlignment.center,
               spacing: 16,
+              runSpacing: 16,
               children: [
                 SizedBox(
                   width: 130,
@@ -1825,7 +2178,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     'Track donations',
                     Icons.history,
                     Colors.teal,
-                    () => setState(() => _currentModule = 'donation_history'),
+                    () {
+                      setState(() => _currentModule = 'donation_history');
+                      _loadReminders();
+                      _checkAndSendDueReminders();
+                    },
                   ),
                   _quickAccessCard(
                     'Communication',
@@ -1847,6 +2204,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     Icons.verified_user,
                     Colors.blue,
                     () => setState(() => _currentModule = 'verification'),
+                  ),
+                  _quickAccessCard(
+                    'Document Verification',
+                    'Verify recipient documents',
+                    Icons.description,
+                    Colors.teal,
+                    () => setState(() => _currentModule = 'document_verification'),
                   ),
                   _quickAccessCard(
                     'Hospital/Bank',
@@ -2301,6 +2665,60 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   // --- Inbox list builders ------------------------------------------------
+  /// Builds a countdown timer widget showing remaining days of 90-day cooldown
+  Widget _buildCooldownTimer(Map<String, dynamic> request) {
+    final cooldownUntilStr = request['cooldownUntil']?.toString();
+    if (cooldownUntilStr == null || cooldownUntilStr.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    DateTime cooldownDate;
+    try {
+      cooldownDate = DateTime.parse(cooldownUntilStr);
+    } catch (_) {
+      return const SizedBox.shrink();
+    }
+
+    final now = DateTime.now();
+    final totalDays = 90;
+    final elapsed = now.difference(cooldownDate.subtract(Duration(days: totalDays)));
+    final daysLeft = cooldownDate.difference(now).inDays;
+    final isComplete = daysLeft <= 0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isComplete ? Colors.green.shade50 : Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isComplete ? Colors.green.shade300 : Colors.blue.shade300,
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isComplete ? Icons.check_circle : Icons.timer,
+            size: 16,
+            color: isComplete ? Colors.green : Colors.blue,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isComplete
+                ? '✅ Eligible to donate again!'
+                : '⏳ $daysLeft days remaining',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: isComplete ? Colors.green.shade700 : Colors.blue.shade700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _inboxDonorRequests() {
     if (FirebaseService.initialized) {
       return StreamBuilder<QuerySnapshot>(
@@ -2316,17 +2734,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final d = docs[i];
               final Map<String, dynamic> rd = d.data() as Map<String, dynamic>;
               return Card(
-                elevation: 3,
+                elevation: 0,
+                color: Colors.transparent,
                 margin: EdgeInsets.symmetric(horizontal: 0, vertical: 6),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.withOpacity(0.2)),
+                ),
                 child: InkWell(
-                  onTap: () {
-                    setState(() {
-                      _selectedItem = Map<String, dynamic>.from(rd);
-                      _selectedType = 'donor_request';
-                      _selectedId = d.id;
-                    });
-                  },
+                  onTap: () => _openDonorRequestDetail(Map<String, dynamic>.from(rd), d.id),
                   child: Padding(
                     padding: EdgeInsets.all(12),
                     child: Column(
@@ -2339,10 +2755,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             Container(
                               padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
-                                color: (rd['status'] ?? 'pending') == 'approved' ? Colors.green : Colors.orange,
+                                color: Colors.transparent,
                                 borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: (rd['status'] ?? 'pending') == 'approved' || (rd['status'] ?? 'pending') == 'donated'
+                                      ? Colors.green : Colors.orange,
+                                  width: 1.5,
+                                ),
                               ),
-                              child: Text(rd['status'] ?? 'pending', style: TextStyle(color: Colors.white, fontSize: 10)),
+                              child: Text(rd['status'] ?? 'pending', style: TextStyle(
+                                color: (rd['status'] ?? 'pending') == 'approved' || (rd['status'] ?? 'pending') == 'donated'
+                                    ? Colors.green : Colors.orange,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              )),
                             ),
                           ],
                       ),
@@ -2352,6 +2778,55 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         Text('Requester: ${rd['requesterEmail'] ?? 'N/A'}'),
                         SizedBox(height: 2),
                         Text('Phone: ${rd['requesterPhone'] ?? 'N/A'}', style: TextStyle(color: Colors.grey[700])),
+                        // Show cooldown timer for approved/donated requests
+                        if ((rd['status'] ?? '') == 'approved' || (rd['status'] ?? '') == 'donated') ...[
+                          const SizedBox(height: 6),
+                          _buildCooldownTimer(rd),
+                        ],
+                        if ((rd['status'] ?? 'pending') == 'pending') ...[
+                          const SizedBox(height: 10),
+                          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                            TextButton.icon(
+                              onPressed: () => _approveDonorRequest(d.id),
+                              icon: Icon(Icons.check_circle, size: 16, color: Colors.green),
+                              label: Text('Approve', style: TextStyle(color: Colors.green, fontSize: 12)),
+                              style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+                            ),
+                            SizedBox(width: 4),
+                            TextButton.icon(
+                              onPressed: () async {
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Mark as Donated?'),
+                                    content: const Text('Mark this donor as having donated? A 90-day cooldown will start. The donor will receive a "Thank You" message.'),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.pop(ctx, true),
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                        child: const Text('Yes, Donated', style: TextStyle(color: Colors.white)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirm == true) {
+                                  await _markAsDonated(Map<String, dynamic>.from(rd), d.id);
+                                }
+                              },
+                              icon: Icon(Icons.volunteer_activism, size: 16, color: Colors.green.shade700),
+                              label: Text('Donated', style: TextStyle(color: Colors.green.shade700, fontSize: 12)),
+                              style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+                            ),
+                            SizedBox(width: 4),
+                            TextButton.icon(
+                              onPressed: () => _rejectDonorRequest(d.id),
+                              icon: Icon(Icons.cancel, size: 16, color: Colors.red),
+                              label: Text('Disapprove', style: TextStyle(color: Colors.red, fontSize: 12)),
+                              style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+                            ),
+                          ]),
+                        ],
                       ],
                     ),
                   ),
@@ -2375,9 +2850,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
             try {
               final Map<String, dynamic> r = jsonDecode(list[i]);
               return Card(
+                elevation: 0,
+                color: Colors.transparent,
                 margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.withOpacity(0.2)),
+                ),
                 child: InkWell(
-                  onTap: () => setState(() { _selectedItem = Map<String, dynamic>.from(r); _selectedType = 'donor_request'; _selectedId = i.toString(); }),
+                  onTap: () => _openDonorRequestDetail(Map<String, dynamic>.from(r), i.toString()),
                   child: Padding(
                     padding: EdgeInsets.all(12),
                     child: Column(
@@ -2390,10 +2871,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             Container(
                               padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
-                                color: (r['status'] ?? 'pending') == 'approved' ? Colors.green : Colors.orange,
+                                color: Colors.transparent,
                                 borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: (r['status'] ?? 'pending') == 'approved' || (r['status'] ?? 'pending') == 'donated'
+                                      ? Colors.green : Colors.orange,
+                                  width: 1.5,
+                                ),
                               ),
-                              child: Text(r['status'] ?? 'pending', style: TextStyle(color: Colors.white, fontSize: 10)),
+                              child: Text(r['status'] ?? 'pending', style: TextStyle(
+                                color: (r['status'] ?? 'pending') == 'approved' || (r['status'] ?? 'pending') == 'donated'
+                                    ? Colors.green : Colors.orange,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              )),
                             ),
                           ],
                       ),
@@ -2423,6 +2914,56 @@ class _AdminDashboardState extends State<AdminDashboard> {
                             Text('${r['contact'] ?? 'N/A'}', style: TextStyle(color: Colors.grey[700], fontSize: 12)),
                           ],
                       ),
+                        // Show cooldown timer for approved/donated demo requests
+                        if ((r['status'] ?? '') == 'approved' || (r['status'] ?? '') == 'donated') ...[
+                          const SizedBox(height: 6),
+                          _buildCooldownTimer(r),
+                        ],
+                        if ((r['status'] ?? 'pending') == 'pending') ...[
+                          SizedBox(height: 8),
+                          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                            TextButton.icon(
+                              onPressed: () async {
+                                final prefs = await SharedPreferences.getInstance();
+                                final list = prefs.getStringList('donor_requests') ?? <String>[];
+                                if (i < list.length) {
+                                  final now = DateTime.now();
+                                  final cooldownUntil = now.add(const Duration(days: 90));
+                                  final Map<String, dynamic> ru = jsonDecode(list[i]);
+                                  ru['status'] = 'approved';
+                                  ru['handledAt'] = now.toIso8601String();
+                                  ru['cooldownUntil'] = cooldownUntil.toIso8601String();
+                                  ru['lastDonation'] = now.toIso8601String();
+                                  list[i] = jsonEncode(ru);
+                                  await prefs.setStringList('donor_requests', list);
+                                  // Silent approval — timer shows in UI
+                                  setState(() {});
+                                }
+                              },
+                              icon: Icon(Icons.check_circle, size: 16, color: Colors.green),
+                              label: Text('Approve', style: TextStyle(color: Colors.green, fontSize: 11)),
+                              style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
+                            ),
+                            SizedBox(width: 6),
+                            TextButton.icon(
+                              onPressed: () async {
+                                final prefs = await SharedPreferences.getInstance();
+                                final list = prefs.getStringList('donor_requests') ?? <String>[];
+                                if (i < list.length) {
+                                  final Map<String, dynamic> ru = jsonDecode(list[i]);
+                                  ru['status'] = 'rejected';
+                                  list[i] = jsonEncode(ru);
+                                  await prefs.setStringList('donor_requests', list);
+                                  _showSnack('Rejected (demo)');
+                                  setState(() {});
+                                }
+                              },
+                              icon: Icon(Icons.cancel, size: 16, color: Colors.red),
+                              label: Text('Disapprove', style: TextStyle(color: Colors.red, fontSize: 11)),
+                              style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
+                            ),
+                          ]),
+                        ],
                       ],
                     ),
                   ),
@@ -2460,7 +3001,30 @@ class _AdminDashboardState extends State<AdminDashboard> {
           }
           return Column(
             children: [
-              _buildAllDonorsSearchBar(),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(child: _buildAllDonorsSearchBar()),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => _downloadDonorsCsv(
+                        docs.map((d) => d.data() as Map<String, dynamic>).toList(),
+                      ),
+                      icon: const Icon(Icons.download, size: 16),
+                      label: Text('CSV', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFD32F2F),
+                        side: const BorderSide(color: Color(0xFFD32F2F), width: 1.5),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               Expanded(
                 child: ListView.builder(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -2649,7 +3213,33 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
         return Column(
           children: [
-            _buildAllDonorsSearchBar(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(child: _buildAllDonorsSearchBar()),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      final donorMaps = donors.map((s) {
+                        try { return jsonDecode(s) as Map<String, dynamic>; } catch (_) { return <String, dynamic>{}; }
+                      }).toList();
+                      _downloadDonorsCsv(donorMaps);
+                    },
+                    icon: const Icon(Icons.download, size: 16),
+                    label: const Text('CSV', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFD32F2F),
+                      side: const BorderSide(color: Color(0xFFD32F2F), width: 1.5),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Expanded(
               child: ListView.builder(
           padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -2792,26 +3382,83 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildAllDonorsSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: TextField(
-        onChanged: (value) => setState(() => _allDonorsSearchQuery = value),
-        decoration: InputDecoration(
-          hintText: 'Search donors by name, email, phone, blood group...',
-          prefixIcon: const Icon(Icons.search),
-          suffixIcon: _allDonorsSearchQuery.isEmpty
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () => setState(() => _allDonorsSearchQuery = ''),
-                ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-          isDense: true,
+    return TextField(
+      onChanged: (value) => setState(() => _allDonorsSearchQuery = value),
+      decoration: InputDecoration(
+        hintText: 'Search donors...',
+        hintStyle: TextStyle(fontSize: 13),
+        prefixIcon: const Icon(Icons.search, size: 18, color: Colors.black),
+        suffixIcon: _allDonorsSearchQuery.isEmpty
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.clear, size: 16),
+                onPressed: () => setState(() => _allDonorsSearchQuery = ''),
+              ),
+        filled: false,
+        contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(25),
+          borderSide: const BorderSide(color: Colors.black, width: 2),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(25),
+          borderSide: const BorderSide(color: Colors.black, width: 2),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(25),
+          borderSide: const BorderSide(color: Colors.black, width: 2),
         ),
       ),
     );
+  }
+
+  Future<void> _downloadDonorsCsv(List<Map<String, dynamic>> donors) async {
+    try {
+      // Build CSV content
+      final buffer = StringBuffer();
+      buffer.writeln('Name,Email,Blood Group,Location,Contact,Designation,Status,Approved');
+      
+      for (final d in donors) {
+        final name = _csvEscape(d['name']?.toString() ?? '');
+        final email = _csvEscape(d['email']?.toString() ?? '');
+        final bloodGroup = _csvEscape(d['bloodGroup']?.toString() ?? '');
+        final location = _csvEscape(d['location']?.toString() ?? '');
+        final contact = _csvEscape(d['contact']?.toString() ?? '');
+        final designation = _csvEscape(d['designation']?.toString() ?? '');
+        final status = _csvEscape(d['verificationStatus']?.toString() ?? (d['approved'] == true ? 'approved' : 'pending'));
+        final approved = d['approved'] == true ? 'Yes' : 'No';
+        buffer.writeln('$name,$email,$bloodGroup,$location,$contact,$designation,$status,$approved');
+      }
+
+      final csvContent = buffer.toString();
+      final fileName = 'blood_bridge_donors_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final bytes = utf8.encode(csvContent);
+
+      // Save to app's documents directory (works on both Android & iOS)
+      final dir = await getApplicationDocumentsDirectory();
+      final file = io.File('${dir.path}/$fileName');
+      await file.writeAsBytes(bytes);
+
+      // Share the CSV file so user can save to Downloads, email, WhatsApp, etc.
+      if (mounted) {
+        await Share.shareXFiles(
+          [XFile(file.path, mimeType: 'text/csv')],
+          subject: 'Blood Bridge Donors CSV',
+        );
+        _showSnack('CSV ready: ${donors.length} donors exported');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnack('Error: $e', isError: true);
+      }
+    }
+  }
+
+  String _csvEscape(String value) {
+    if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+      return '"${value.replaceAll('"', '""')}"';
+    }
+    return value;
   }
 
   bool _matchesAllDonorsSearch(Map<String, dynamic> donor) {
@@ -3563,9 +4210,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           OutlinedButton.icon(
                             onPressed: () {
                               // Edit functionality for demo mode can be added here
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Edit functionality for demo mode')),
-                              );
+                              showTopSnackBar(context, message: 'Edit functionality for demo mode');
                             },
                             icon: Icon(Icons.edit, size: 16),
                             label: Text('Edit'),
@@ -3582,9 +4227,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           OutlinedButton.icon(
                             onPressed: () {
                               // Delete functionality for demo mode can be added here
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Delete functionality for demo mode')),
-                              );
+                              showTopSnackBar(context, message: 'Delete functionality for demo mode');
                             },
                             icon: Icon(Icons.delete, size: 16),
                             label: Text('Delete'),
@@ -4208,13 +4851,612 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Future<void> _approveSelected() async {
-    if (_selectedType != 'donor_request' || _selectedItem == null) return;
+  void _openDonorRequestDetail(Map<String, dynamic> item, String id) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: const Text('Donor Request Details', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            flexibleSpace: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFFD32F2F), Color(0xFFE57373)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+              ),
+            ),
+            iconTheme: const IconThemeData(color: Colors.white),
+            elevation: 0,
+          ),
+          body: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFFFF5F5), Color(0xFFFFEBEE)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+            child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Status badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: (item['status'] ?? 'pending') == 'approved' || (item['status'] ?? 'pending') == 'donated'
+                          ? Colors.green : Colors.orange,
+                      width: 2,
+                    ),
+                  ),
+                  child: Text(
+                    (item['status'] ?? 'pending').toString().toUpperCase(),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: (item['status'] ?? 'pending') == 'approved' || (item['status'] ?? 'pending') == 'donated'
+                          ? Colors.green : Colors.orange,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _adminDetailRow('Donor Email', item['donorEmail']?.toString() ?? 'N/A'),
+                _adminDetailRow('Donor Name', item['donorName']?.toString() ?? 'N/A'),
+                _adminDetailRow('Requester Email', item['requesterEmail']?.toString() ?? 'N/A'),
+                _adminDetailRow('Phone', item['requesterPhone']?.toString() ?? 'N/A'),
+                _adminDetailRow('Reason', item['reason']?.toString() ?? 'N/A'),
+                _adminDetailRow('Hospital', item['hospital']?.toString() ?? 'N/A'),
+                _adminDetailRow('Blood Group', item['bloodGroup']?.toString() ?? 'N/A'),
+                // Show cooldown timer for approved/donated requests
+                if ((item['status'] ?? '') == 'approved' || (item['status'] ?? '') == 'donated') ...[
+                  const SizedBox(height: 12),
+                  _buildCooldownTimer(item),
+                ],
+                const SizedBox(height: 24),
+                if ((item['status'] ?? 'pending') == 'pending') ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        _approveRequestItem(item, id);
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.check_circle, color: Colors.black),
+                      label: const Text('Approve Request', style: TextStyle(color: Colors.black, fontSize: 16)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        side: const BorderSide(color: Colors.black, width: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Mark as Donated?'),
+                            content: const Text('This will mark the donor as having completed the donation. A 90-day cooldown will start, and both donor & recipient will be notified.\n\nA "Thank You" message will be sent to the donor.'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                              ElevatedButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                child: const Text('Yes, Mark Donated', style: TextStyle(color: Colors.white)),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirm == true) {
+                          await _markAsDonated(item, id);
+                          if (context.mounted) Navigator.pop(context);
+                        }
+                      },
+                      icon: const Icon(Icons.volunteer_activism, color: Colors.black),
+                      label: const Text('Mark as Donated ✅', style: TextStyle(color: Colors.black, fontSize: 16)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        side: const BorderSide(color: Colors.green, width: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        _rejectRequestItem(item, id);
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.cancel_outlined, color: Colors.black),
+                      label: const Text('Reject Request', style: TextStyle(color: Colors.black, fontSize: 16)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        side: const BorderSide(color: Colors.black, width: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Delete Request?'),
+                          content: const Text('This will permanently delete this donor request and reset donor status.'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                            ElevatedButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                              child: const Text('Delete', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        await _deleteRequestItem(item, id);
+                        if (context.mounted) Navigator.pop(context);
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline, color: Colors.black),
+                    label: const Text('Delete Request', style: TextStyle(color: Colors.black, fontSize: 16)),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      side: const BorderSide(color: Colors.black, width: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _adminDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black87, fontSize: 14)),
+          ),
+          Expanded(
+            child: Text(value, style: const TextStyle(color: Colors.black54, fontSize: 14)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _approveRequestItem(Map<String, dynamic> item, String id) async {
+    final donorEmail = item['donorEmail']?.toString() ?? '';
+    final donorName = item['donorName']?.toString() ?? '';
+    final now = DateTime.now();
+    final cooldownUntil = now.add(const Duration(days: 90));
+
     if (FirebaseService.initialized) {
       try {
-        await FirebaseFirestore.instance.collection('donor_requests').doc(_selectedId).update({'status': 'approved', 'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin', 'handledAt': DateTime.now().toIso8601String(), 'sharedData': _selectedItem});
+        await FirebaseFirestore.instance.collection('donor_requests').doc(id).update({
+          'status': 'approved',
+          'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+          'handledAt': now.toIso8601String(),
+          'updatedAt': now.toIso8601String(),
+          'cooldownUntil': cooldownUntil.toIso8601String(),
+          'lastDonation': now.toIso8601String(),
+        });
+
+        // Update donor's user document with cooldown + last donation
+        if (donorEmail.isNotEmpty) {
+          await _updateDonorCooldown(donorEmail, now, cooldownUntil);
+        }
+
+        // Schedule the 3-month reminder
+        await _scheduleDonationReminder(donorEmail, donorName, cooldownUntil, id);
+
+        // Silent approval — timer shows in UI instead of popup
+        if (mounted) setState(() {});
+      } catch (e) { _showSnack('Failed: $e', isError: true); }
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('donor_requests') ?? <String>[];
+      final idx = int.tryParse(id) ?? 0;
+      if (idx >= 0 && idx < list.length) {
+        try {
+          final m = jsonDecode(list[idx]) as Map<String, dynamic>;
+          m['status'] = 'approved';
+          m['updatedAt'] = now.toIso8601String();
+          m['cooldownUntil'] = cooldownUntil.toIso8601String();
+          m['lastDonation'] = now.toIso8601String();
+          list[idx] = jsonEncode(m);
+          await prefs.setStringList('donor_requests', list);
+        } catch (_) {}
+      }
+      // Demo mode: update donor user
+      if (donorEmail.isNotEmpty) {
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['hasDonated'] = true;
+              u['lastDonation'] = now.toIso8601String();
+              u['cooldownUntil'] = cooldownUntil.toIso8601String();
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+        // Demo reminder
+        final reminders = prefs.getStringList('donation_reminders') ?? <String>[];
+        reminders.add(jsonEncode({
+          'donorEmail': donorEmail,
+          'donorName': donorName,
+          'message': 'آپ دوبارہ خون عطیہ کر سکتے ہیں! 3 ماہ مکمل ہو چکے ہیں۔\nYou are now eligible to donate blood again! Your 3-month waiting period is complete.',
+          'sendAt': cooldownUntil.toIso8601String(),
+          'sent': false,
+          'createdAt': now.toIso8601String(),
+          'donationRequestId': id,
+        }));
+        await prefs.setStringList('donation_reminders', reminders);
+      }
+      _showSnack('Donor request approved! 90-day cooldown set. (Demo)');
+    }
+  }
+
+  /// Mark a donor request as "donated" — starts 90-day cooldown, sends thank-you message
+  Future<void> _markAsDonated(Map<String, dynamic> item, String id) async {
+    final donorEmail = item['donorEmail']?.toString() ?? '';
+    final donorName = item['donorName']?.toString() ?? 'Donor';
+    final requesterEmail = item['requesterEmail']?.toString() ?? '';
+    final now = DateTime.now();
+    final cooldownUntil = now.add(const Duration(days: 90));
+
+    if (FirebaseService.initialized) {
+      try {
+        // Update donor request status
+        await FirebaseFirestore.instance.collection('donor_requests').doc(id).update({
+          'status': 'donated',
+          'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+          'handledAt': now.toIso8601String(),
+          'updatedAt': now.toIso8601String(),
+          'cooldownUntil': cooldownUntil.toIso8601String(),
+          'lastDonation': now.toIso8601String(),
+        });
+
+        // Update donor's user document with cooldown + increment donation count
+        if (donorEmail.isNotEmpty) {
+          await _updateDonorCooldown(donorEmail, now, cooldownUntil);
+          // Increment donation count
+          try {
+            final usersSnap = await FirebaseFirestore.instance
+                .collection('users')
+                .where('email', isEqualTo: donorEmail)
+                .limit(1)
+                .get();
+            for (final doc in usersSnap.docs) {
+              await doc.reference.update({
+                'donationCount': FieldValue.increment(1),
+              });
+            }
+          } catch (_) {}
+        }
+
+        // Schedule the 3-month eligibility reminder
+        await _scheduleDonationReminder(donorEmail, donorName, cooldownUntil, id);
+
+        // Send "Thank You" in-app message to donor
+        final thankYouMessage = '🩸 *Thank You for Your Donation!* 🩸\n\n'
+            'Dear $donorName,\n\n'
+            'Your blood donation has been recorded. You have helped save a life today!\n\n'
+            '📅 *Next Eligible Donation:* ${cooldownUntil.day}/${cooldownUntil.month}/${cooldownUntil.year}\n'
+            '⏳ Please wait 90 days before your next donation.\n\n'
+            'With gratitude,\n'
+            '*Quaidian Society of Blood Donors / Blood Bridge* ❤️';
+
+        try {
+          final conversationId = _getConversationId(donorEmail);
+          final timestamp = Timestamp.fromDate(now);
+          await FirebaseFirestore.instance.collection('messages').add({
+            'conversationId': conversationId,
+            'from': 'Admin',
+            'to': donorEmail,
+            'message': thankYouMessage,
+            'sentAt': timestamp,
+            'type': 'donation_thanks',
+            'read': false,
+          });
+          await FirebaseFirestore.instance.collection('chats').doc(conversationId).set({
+            'conversationId': conversationId,
+            'participants': [donorEmail, 'Admin'],
+            'participantNames': [donorName, 'Admin'],
+            'lastMessage': thankYouMessage,
+            'lastMessageAt': timestamp,
+            'lastMessageFrom': 'Admin',
+            'status': 'active',
+            'unreadCount': 0,
+            'updatedAt': timestamp,
+          }, SetOptions(merge: true));
+        } catch (_) {}
+
+        // Notify recipient that donation happened
+        if (requesterEmail.isNotEmpty) {
+          final recipientMsg = '✅ *Donation Confirmed!*\n\n'
+              'The donor *$donorName* has donated blood for your request.\n\n'
+              'We hope the recipient recovers soon. ❤️\n\n'
+              '— Blood Bridge';
+          try {
+            final recConvId = _getConversationId(requesterEmail);
+            final timestamp = Timestamp.fromDate(now);
+            await FirebaseFirestore.instance.collection('messages').add({
+              'conversationId': recConvId,
+              'from': 'Admin',
+              'to': requesterEmail,
+              'message': recipientMsg,
+              'sentAt': timestamp,
+              'type': 'donation_confirmed',
+              'read': false,
+            });
+            await FirebaseFirestore.instance.collection('chats').doc(recConvId).set({
+              'conversationId': recConvId,
+              'participants': [requesterEmail, 'Admin'],
+              'participantNames': [requesterEmail.split('@')[0], 'Admin'],
+              'lastMessage': recipientMsg,
+              'lastMessageAt': timestamp,
+              'lastMessageFrom': 'Admin',
+              'status': 'active',
+              'unreadCount': 0,
+              'updatedAt': timestamp,
+            }, SetOptions(merge: true));
+          } catch (_) {}
+        }
+
+        _showSnack('✅ Marked as Donated! 90-day cooldown started. Thank-you sent.');
+        
+        // Show thank-you popup to admin
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.favorite, color: Colors.red, size: 28),
+                  SizedBox(width: 8),
+                  Text('Donation Recorded! 🩸', style: TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Text(
+                'Thank you, $donorName!\n\nYour donation has been recorded.\n\n'
+                '📅 Cooldown until: ${cooldownUntil.day}/${cooldownUntil.month}/${cooldownUntil.year}\n'
+                '⏳ 90 days remaining until next eligible donation.',
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                  child: const Text('OK', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        }
+      } catch (e) {
+        _showSnack('Failed: $e', isError: true);
+      }
+    } else {
+      // Demo mode
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('donor_requests') ?? <String>[];
+      final idx = int.tryParse(id) ?? 0;
+      if (idx >= 0 && idx < list.length) {
+        try {
+          final m = jsonDecode(list[idx]) as Map<String, dynamic>;
+          m['status'] = 'donated';
+          m['updatedAt'] = now.toIso8601String();
+          m['cooldownUntil'] = cooldownUntil.toIso8601String();
+          m['lastDonation'] = now.toIso8601String();
+          list[idx] = jsonEncode(m);
+          await prefs.setStringList('donor_requests', list);
+        } catch (_) {}
+      }
+      if (donorEmail.isNotEmpty) {
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['hasDonated'] = true;
+              u['lastDonation'] = now.toIso8601String();
+              u['cooldownUntil'] = cooldownUntil.toIso8601String();
+              u['donationCount'] = ((u['donationCount'] ?? 0) as num) + 1;
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
+      // Demo: show thank-you popup
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.favorite, color: Colors.red, size: 28),
+                SizedBox(width: 8),
+                Text('Donation Recorded! 🩸 (Demo)', style: TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: Text(
+              'Thank you, $donorName!\n\nYour donation has been recorded.\n\n'
+              '📅 Cooldown until: ${cooldownUntil.day}/${cooldownUntil.month}/${cooldownUntil.year}\n'
+              '⏳ 90 days remaining.',
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: const Text('OK', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+      }
+      _showSnack('Donated! (Demo)');
+    }
+  }
+
+  Future<void> _rejectRequestItem(Map<String, dynamic> item, String id) async {
+    if (FirebaseService.initialized) {
+      try {
+        await FirebaseFirestore.instance.collection('donor_requests').doc(id).update({
+          'status': 'rejected',
+          'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+          'handledAt': DateTime.now().toIso8601String(),
+          'updatedAt': DateTime.now().toIso8601String(),
+        });
+        _showSnack('Donor request rejected!');
+      } catch (e) { _showSnack('Failed: $e', isError: true); }
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('donor_requests') ?? <String>[];
+      final idx = int.tryParse(id) ?? 0;
+      if (idx >= 0 && idx < list.length) {
+        try {
+          final m = jsonDecode(list[idx]) as Map<String, dynamic>;
+          m['status'] = 'rejected';
+          m['updatedAt'] = DateTime.now().toIso8601String();
+          list[idx] = jsonEncode(m);
+          await prefs.setStringList('donor_requests', list);
+        } catch (_) {}
+      }
+      _showSnack('Donor request rejected! (Demo)');
+    }
+  }
+
+  Future<void> _deleteRequestItem(Map<String, dynamic> item, String id) async {
+    final donorEmail = item['donorEmail']?.toString() ?? '';
+    
+    if (FirebaseService.initialized) {
+      try {
+        // Delete the donor request
+        await FirebaseFirestore.instance.collection('donor_requests').doc(id).delete();
+        
+        // Delete associated reminders
+        try {
+          final remindersSnap = await FirebaseFirestore.instance
+              .collection('donation_reminders')
+              .where('donationRequestId', isEqualTo: id)
+              .get();
+          for (final remDoc in remindersSnap.docs) {
+            await remDoc.reference.delete();
+          }
+        } catch (_) {}
+        
+        // Reset donor's approval status
+        if (donorEmail.isNotEmpty) {
+          final usersSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .where('email', isEqualTo: donorEmail)
+              .limit(1)
+              .get();
+          for (final doc in usersSnap.docs) {
+            await doc.reference.update({
+              'approved': false,
+              'verified': false,
+            });
+            try {
+              await doc.reference.update({
+                'cooldownUntil': FieldValue.delete(),
+                'lastDonation': FieldValue.delete(),
+              });
+            } catch (_) {}
+          }
+        }
+        _showSnack('Request deleted! Donor available for new requests.');
+      } catch (e) { _showSnack('Failed: $e', isError: true); }
+    } else {
+      // Demo mode
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Remove from donor_requests
+      final list = prefs.getStringList('donor_requests') ?? <String>[];
+      final idx = int.tryParse(id) ?? 0;
+      if (idx >= 0 && idx < list.length) {
+        list.removeAt(idx);
+        await prefs.setStringList('donor_requests', list);
+      }
+      
+      // Reset donor in demo_users
+      if (donorEmail.isNotEmpty) {
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['approved'] = false;
+              u['verified'] = false;
+              u.remove('cooldownUntil');
+              u.remove('lastDonation');
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
+      
+      _showSnack('Request deleted! Donor available for new requests.');
+    }
+  }
+
+  Future<void> _approveSelected() async {
+    if (_selectedType != 'donor_request' || _selectedItem == null) return;
+    final now = DateTime.now();
+    final cooldownUntil = now.add(const Duration(days: 90));
+    final donorEmail = _extractDonorEmail(_selectedItem!);
+    final donorName = _extractDonorName(_selectedItem!);
+
+    if (FirebaseService.initialized) {
+      try {
+        await FirebaseFirestore.instance.collection('donor_requests').doc(_selectedId).update({
+          'status': 'approved',
+          'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+          'handledAt': now.toIso8601String(),
+          'sharedData': _selectedItem,
+          'cooldownUntil': cooldownUntil.toIso8601String(),
+          'lastDonation': now.toIso8601String(),
+        });
         await _markFirstDonationApproved(_selectedItem!);
-        _showSnack('Approved');
+        // Update donor's user document
+        if (donorEmail.isNotEmpty) {
+          await _updateDonorCooldown(donorEmail, now, cooldownUntil);
+        }
+        // Schedule the 3-month reminder
+        await _scheduleDonationReminder(donorEmail, donorName, cooldownUntil, _selectedId!);
+        // Silent approval — timer shows in UI instead of popup
+        if (mounted) setState(() {});
       } catch (e) { _showSnack('Failed: $e'); }
     } else {
       final prefs = await SharedPreferences.getInstance();
@@ -4224,14 +5466,73 @@ class _AdminDashboardState extends State<AdminDashboard> {
       final Map<String, dynamic> r = jsonDecode(list[idx]);
       r['status'] = 'approved';
       r['handledBy'] = prefs.getString('demo_current_email') ?? 'superadmin@bloodbridge.app';
-      r['handledAt'] = DateTime.now().toIso8601String();
+      r['handledAt'] = now.toIso8601String();
       r['sharedData'] = _selectedItem;
+      r['cooldownUntil'] = cooldownUntil.toIso8601String();
+      r['lastDonation'] = now.toIso8601String();
       list[idx] = jsonEncode(r);
       await prefs.setStringList('donor_requests', list);
       await _markFirstDonationApproved(r);
+      // Demo: update donor
+      if (donorEmail.isNotEmpty) {
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u['hasDonated'] = true;
+              u['lastDonation'] = now.toIso8601String();
+              u['cooldownUntil'] = cooldownUntil.toIso8601String();
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
       setState(() { _selectedItem = Map<String, dynamic>.from(r); });
-      _showSnack('Approved (demo)');
+      // Silent approval — timer shows in UI instead of popup
     }
+  }
+
+  Future<void> _approveDonorRequest(String docId) async {
+    final now = DateTime.now();
+    final cooldownUntil = now.add(const Duration(days: 90));
+
+    try {
+      // Fetch the request first to get donor email/name
+      final docSnap = await FirebaseFirestore.instance.collection('donor_requests').doc(docId).get();
+      final data = docSnap.data();
+      final donorEmail = data?['donorEmail']?.toString() ?? '';
+      final donorName = data?['donorName']?.toString() ?? '';
+
+      await FirebaseFirestore.instance.collection('donor_requests').doc(docId).update({
+        'status': 'approved',
+        'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin',
+        'handledAt': now.toIso8601String(),
+        'cooldownUntil': cooldownUntil.toIso8601String(),
+        'lastDonation': now.toIso8601String(),
+      });
+
+      // Update donor's user document
+      if (donorEmail.isNotEmpty) {
+        await _updateDonorCooldown(donorEmail, now, cooldownUntil);
+      }
+
+      // Schedule the 3-month reminder
+      await _scheduleDonationReminder(donorEmail, donorName, cooldownUntil, docId);
+
+      // Silent approval — timer shows in UI instead of popup
+      if (mounted) setState(() {});
+    } catch (e) { _showSnack('Failed: $e', isError: true); }
+  }
+
+  Future<void> _rejectDonorRequest(String docId) async {
+    try {
+      await FirebaseFirestore.instance.collection('donor_requests').doc(docId).update({
+        'status': 'rejected', 'handledBy': FirebaseAuth.instance.currentUser?.email ?? 'admin', 'handledAt': DateTime.now().toIso8601String()
+      });
+      _showSnack('Request rejected');
+    } catch (e) { _showSnack('Failed: $e', isError: true); }
   }
 
   String _extractDonorEmail(Map<String, dynamic> request) {
@@ -4274,6 +5575,252 @@ class _AdminDashboardState extends State<AdminDashboard> {
       if (value.isNotEmpty) return value;
     }
     return '';
+  }
+
+  // =====================================================================
+  // DONATION COOLDOWN & REMINDER SYSTEM
+  // =====================================================================
+
+  /// Updates the donor's user document with lastDonation and cooldownUntil
+  Future<void> _updateDonorCooldown(String donorEmail, DateTime now, DateTime cooldownUntil) async {
+    try {
+      final usersSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: donorEmail)
+          .limit(1)
+          .get();
+      for (final doc in usersSnap.docs) {
+        await doc.reference.update({
+          'hasDonated': true,
+          'lastDonation': now.toIso8601String(),
+          'cooldownUntil': cooldownUntil.toIso8601String(),
+        });
+      }
+    } catch (e) {
+      print('Error updating donor cooldown: $e');
+    }
+  }
+
+  /// Schedules a 3-month reminder for the donor in Firestore
+  Future<void> _scheduleDonationReminder(String donorEmail, String donorName, DateTime sendAt, String donationRequestId) async {
+    if (donorEmail.isEmpty) return;
+
+    final reminderMessage = 'آپ دوبارہ خون عطیہ کر سکتے ہیں! 3 ماہ مکمل ہو چکے ہیں۔\n'
+        'You are now eligible to donate blood again! Your 3-month waiting period after your last donation is complete. '
+        'Please visit Blood Bridge to help save more lives. ❤️';
+
+    try {
+      await FirebaseFirestore.instance.collection('donation_reminders').add({
+        'donorEmail': donorEmail,
+        'donorName': donorName,
+        'message': reminderMessage,
+        'sendAt': Timestamp.fromDate(sendAt),
+        'sent': false,
+        'createdAt': Timestamp.fromDate(DateTime.now()),
+        'donationRequestId': donationRequestId,
+      });
+      print('✅ Reminder scheduled for $donorEmail at ${sendAt.toIso8601String()}');
+    } catch (e) {
+      print('Error scheduling reminder: $e');
+    }
+  }
+
+  /// Checks for due reminders and sends them as in-app messages to donors
+  Future<void> _checkAndSendDueReminders() async {
+    if (!FirebaseService.initialized) return;
+
+    try {
+      final now = Timestamp.fromDate(DateTime.now());
+      final dueSnap = await FirebaseFirestore.instance
+          .collection('donation_reminders')
+          .where('sent', isEqualTo: false)
+          .where('sendAt', isLessThanOrEqualTo: now)
+          .get();
+
+      int sentCount = 0;
+      for (final doc in dueSnap.docs) {
+        final data = doc.data();
+        final donorEmail = data['donorEmail']?.toString() ?? '';
+        final message = data['message']?.toString() ?? 
+            'You are now eligible to donate blood again! Your 3-month waiting period is complete. ❤️';
+
+        if (donorEmail.isEmpty) continue;
+
+        try {
+          // Send in-app message to the donor
+          final conversationId = _getConversationId(donorEmail);
+          final timestamp = Timestamp.fromDate(DateTime.now());
+
+          await FirebaseFirestore.instance.collection('messages').add({
+            'conversationId': conversationId,
+            'from': 'Admin',
+            'to': donorEmail,
+            'message': message,
+            'sentAt': timestamp,
+            'type': 'reminder',
+            'read': false,
+          });
+
+          // Update/create chat conversation
+          await FirebaseFirestore.instance
+              .collection('chats')
+              .doc(conversationId)
+              .set({
+            'conversationId': conversationId,
+            'participants': [donorEmail, 'Admin'],
+            'participantNames': [donorEmail.split('@')[0], 'Admin'],
+            'lastMessage': message,
+            'lastMessageAt': timestamp,
+            'lastMessageFrom': 'Admin',
+            'status': 'active',
+            'unreadCount': 0,
+            'updatedAt': timestamp,
+          }, SetOptions(merge: true));
+
+          // Mark reminder as sent
+          await doc.reference.update({'sent': true, 'sentAt': timestamp});
+
+          // Also clear cooldown on donor's user doc
+          try {
+            final userSnap = await FirebaseFirestore.instance
+                .collection('users')
+                .where('email', isEqualTo: donorEmail)
+                .limit(1)
+                .get();
+            for (final userDoc in userSnap.docs) {
+              await userDoc.reference.update({
+                'cooldownUntil': FieldValue.delete(),
+              });
+            }
+          } catch (_) {}
+
+          sentCount++;
+        } catch (e) {
+          print('Error sending reminder to $donorEmail: $e');
+        }
+      }
+
+      if (sentCount > 0) {
+        print('✅ Sent $sentCount donation eligibility reminder(s)');
+        // Reload reminders list
+        _loadReminders();
+      }
+    } catch (e) {
+      print('Error checking due reminders: $e');
+    }
+  }
+
+  /// Loads all donation reminders and history from Firestore
+  Future<void> _loadReminders() async {
+    setState(() => _isLoadingReminders = true);
+
+    List<Map<String, dynamic>> reminders = [];
+    List<Map<String, dynamic>> history = [];
+
+    if (FirebaseService.initialized) {
+      try {
+        // Load pending reminders
+        final pendingSnap = await FirebaseFirestore.instance
+            .collection('donation_reminders')
+            .where('sent', isEqualTo: false)
+            .orderBy('sendAt', descending: false)
+            .limit(50)
+            .get();
+
+        for (final doc in pendingSnap.docs) {
+          final data = doc.data();
+          reminders.add({
+            'id': doc.id,
+            'donorEmail': data['donorEmail'] ?? '',
+            'donorName': data['donorName'] ?? '',
+            'message': data['message'] ?? '',
+            'sendAt': data['sendAt'] is Timestamp 
+                ? (data['sendAt'] as Timestamp).toDate() 
+                : DateTime.now(),
+            'sent': data['sent'] ?? false,
+            'createdAt': data['createdAt'],
+          });
+        }
+
+        // Load sent reminders (history)
+        final sentSnap = await FirebaseFirestore.instance
+            .collection('donation_reminders')
+            .where('sent', isEqualTo: true)
+            .orderBy('sendAt', descending: true)
+            .limit(50)
+            .get();
+
+        for (final doc in sentSnap.docs) {
+          final data = doc.data();
+          history.add({
+            'id': doc.id,
+            'donorEmail': data['donorEmail'] ?? '',
+            'donorName': data['donorName'] ?? '',
+            'message': data['message'] ?? '',
+            'sendAt': data['sendAt'] is Timestamp 
+                ? (data['sendAt'] as Timestamp).toDate() 
+                : DateTime.now(),
+            'sentAt': data['sentAt'] is Timestamp 
+                ? (data['sentAt'] as Timestamp).toDate() 
+                : null,
+            'sent': true,
+          });
+        }
+
+        // Also load approved donation requests as history
+        final donationSnap = await FirebaseFirestore.instance
+            .collection('donor_requests')
+            .where('status', isEqualTo: 'approved')
+            .orderBy('handledAt', descending: true)
+            .limit(50)
+            .get();
+
+        for (final doc in donationSnap.docs) {
+          final data = doc.data();
+          history.add({
+            'id': doc.id,
+            'type': 'donation',
+            'donorEmail': data['donorEmail'] ?? '',
+            'donorName': data['donorName'] ?? '',
+            'bloodGroup': data['bloodGroup'] ?? '',
+            'handledAt': data['handledAt'] != null 
+                ? (data['handledAt'] is Timestamp 
+                    ? (data['handledAt'] as Timestamp).toDate() 
+                    : DateTime.tryParse(data['handledAt'].toString()))
+                : null,
+            'cooldownUntil': data['cooldownUntil'] != null
+                ? (data['cooldownUntil'] is Timestamp 
+                    ? (data['cooldownUntil'] as Timestamp).toDate() 
+                    : DateTime.tryParse(data['cooldownUntil'].toString()))
+                : null,
+          });
+        }
+      } catch (e) {
+        print('Error loading reminders: $e');
+      }
+    } else {
+      // Demo mode
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('donation_reminders') ?? <String>[];
+      for (final s in list) {
+        try {
+          final r = jsonDecode(s) as Map<String, dynamic>;
+          final sendAt = DateTime.tryParse(r['sendAt']?.toString() ?? '') ?? DateTime.now();
+          final isSent = r['sent'] == true;
+          if (isSent) {
+            history.add({...r, 'sendAt': sendAt});
+          } else {
+            reminders.add({...r, 'sendAt': sendAt, 'id': 'demo_${reminders.length}'});
+          }
+        } catch (_) {}
+      }
+    }
+
+    setState(() {
+      _donationReminders = reminders;
+      _donationHistory = history;
+      _isLoadingReminders = false;
+    });
   }
 
   Future<void> _markFirstDonationApproved(Map<String, dynamic> request) async {
@@ -4637,7 +6184,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final verificationStatus = (data['verificationStatus'] ?? '').toString().toLowerCase();
               final verified = data['verified'] == true || verificationStatus == 'approved';
                   return ListTile(
-                    title: Text(data['name'] ?? 'No name'),
+                    title: Text(data['name'] ?? 'No name', maxLines: 2, overflow: TextOverflow.ellipsis),
                     subtitle: Text('${data['bloodGroup'] ?? ''} • ${data['role'] ?? ''}'),
                     onTap: () {
                       Navigator.of(context).push(MaterialPageRoute(builder: (_) => UserProfileScreen(firebaseUid: d.id)));
@@ -4709,7 +6256,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               final verified = u['verified'] == true || verificationStatus == 'approved';
                   return ListTile(
                     leading: CircleAvatar(child: Text((i+1).toString())),
-                    title: Text(u['name'] ?? 'No name'),
+                    title: Text(u['name'] ?? 'No name', maxLines: 2, overflow: TextOverflow.ellipsis),
                     subtitle: Text('${u['bloodGroup'] ?? ''} • ${u['role'] ?? ''}'),
                     onTap: () {
                       Navigator.of(context).push(MaterialPageRoute(builder: (_) => UserProfileScreen(demoData: u)));
@@ -5382,6 +6929,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final emailCtl = TextEditingController(text: data['email'] ?? '');
     final phoneCtl = TextEditingController(text: data['phone'] ?? '');
     final cnicCtl = TextEditingController(text: data['cnic'] ?? '');
+    final passwordCtl = TextEditingController();
+    bool showPassword = false;
     String selectedRole = data['role'] ?? 'donor';
     String selectedBloodGroup = data['bloodGroup'] ?? 'A+';
     bool verified = data['verified'] ?? false;
@@ -5463,6 +7012,22 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                     SizedBox(height: 12),
                   ],
+                  // Password field
+                  TextField(
+                    controller: passwordCtl,
+                    obscureText: !showPassword,
+                    decoration: InputDecoration(
+                      labelText: 'New Password (leave empty to keep current)',
+                      hintText: 'Enter new password...',
+                      prefixIcon: Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(showPassword ? Icons.visibility : Icons.visibility_off, size: 20),
+                        onPressed: () => setDialogState(() => showPassword = !showPassword),
+                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: selectedRole,
                     dropdownColor: Colors.white.withOpacity(0.95),
@@ -5523,6 +7088,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               ),
               onPressed: () async {
+                final newPassword = passwordCtl.text.trim();
+                
                 final updated = {
                   'name': nameCtl.text.trim(),
                   'email': emailCtl.text.trim(),
@@ -5531,8 +7098,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   'role': selectedRole,
                   'bloodGroup': selectedBloodGroup,
                   'verified': verified,
-                  'approved': verified, // Also update approved field to match verified
+                  'approved': verified,
                 };
+
+                // Handle password change
+                if (newPassword.isNotEmpty) {
+                  updated['password'] = newPassword;
+                  
+                  // For Firebase: send password reset email
+                  if (isFirebase && FirebaseService.initialized) {
+                    try {
+                      final userEmail = emailCtl.text.trim();
+                      if (userEmail.isNotEmpty && userEmail.contains('@')) {
+                        await FirebaseAuth.instance.sendPasswordResetEmail(email: userEmail);
+                        if (mounted) {
+                          _showSnack('Password reset email sent to $userEmail');
+                        }
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        _showSnack('Could not send reset email: $e', isError: true);
+                      }
+                    }
+                  }
+                }
+
                 await _updateUser(id, updated, isFirebase);
                 if (mounted) {
                   Navigator.pop(context);
@@ -5649,20 +7239,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   void _showTopRightSuccess(String message) {
-    final width = MediaQuery.of(context).size.width;
-    final leftInset = (width - 300).clamp(16.0, width - 32.0);
-
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-          margin: EdgeInsets.fromLTRB(leftInset, 12, 16, 0),
-        ),
-      );
+    showTopSnackBar(context, message: message, backgroundColor: Colors.green);
   }
 
   // =====================================================================
@@ -5677,22 +7254,53 @@ class _AdminDashboardState extends State<AdminDashboard> {
           _moduleHeader('Donation History & Reminders', Icons.history, Color(0xFF388E3C)),
           const SizedBox(height: 16),
           
-          // Summary Cards
-          Row(
-            children: [
-              Expanded(child: _miniStatCard('Total Donations', '0', Icons.favorite, Colors.red)),
-              SizedBox(width: 12),
-              Expanded(child: _miniStatCard('This Month', '0', Icons.calendar_month, Colors.blue)),
-              SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Pending Reminders', '0', Icons.notifications_active, Colors.orange)),
-            ],
+          // Summary Cards - responsive wrap
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cardWidth = constraints.maxWidth;
+              // If screen is too narrow for 3 cards, use 2+1 layout
+              if (cardWidth < 340) {
+                return Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: _miniStatCard('Total Donations', '0', Icons.favorite, Colors.red)),
+                        SizedBox(width: 10),
+                        Expanded(child: _miniStatCard('This Month', '0', Icons.calendar_month, Colors.blue)),
+                      ],
+                    ),
+                    SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(child: _miniStatCard('Pending Reminders', '0', Icons.notifications_active, Colors.orange)),
+                        SizedBox(width: 10),
+                        Spacer(flex: 1),
+                      ],
+                    ),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: _miniStatCard('Total Donations', '0', Icons.favorite, Colors.red)),
+                  SizedBox(width: 12),
+                  Expanded(child: _miniStatCard('This Month', '0', Icons.calendar_month, Colors.blue)),
+                  SizedBox(width: 12),
+                  Expanded(child: _miniStatCard('Pending Reminders', '0', Icons.notifications_active, Colors.orange)),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 20),
           
           // Recent Donations
           Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 0,
+            color: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: Color(0xFF388E3C).withOpacity(0.2)),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -5704,12 +7312,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.history, color: Color(0xFF388E3C)),
+                      Icon(Icons.history, color: Color(0xFF388E3C), size: 20),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Recent Donation Activity',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF388E3C)),
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF388E3C)),
                           overflow: TextOverflow.ellipsis,
                           maxLines: 1,
                         ),
@@ -5725,8 +7333,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
           
           // Upcoming Reminders
           Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 0,
+            color: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: Colors.orange.withOpacity(0.2)),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -5738,12 +7350,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.notifications_active, color: Colors.orange),
+                      Icon(Icons.notifications_active, color: Colors.orange, size: 20),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Upcoming Eligibility Reminders',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orange[800]),
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.orange[800]),
                           overflow: TextOverflow.ellipsis,
                           maxLines: 1,
                         ),
@@ -5761,36 +7373,194 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _donationHistoryList() {
-    return Padding(
-      padding: EdgeInsets.all(20),
-      child: Center(
-        child: Column(
-          children: [
-            Icon(Icons.history_outlined, size: 64, color: Colors.grey[300]),
-            SizedBox(height: 16),
-            Text('No donation history yet', style: TextStyle(color: Colors.grey[600])),
-            SizedBox(height: 8),
-            Text('Donations will appear here once recorded', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
-          ],
+    if (_isLoadingReminders) {
+      return const Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Combine: sent reminders + approved donations
+    final allHistory = List<Map<String, dynamic>>.from(_donationHistory);
+    
+    // Sort by date (newest first)
+    allHistory.sort((a, b) {
+      final aDate = a['handledAt'] ?? a['sentAt'] ?? a['sendAt'] ?? DateTime(2000);
+      final bDate = b['handledAt'] ?? b['sentAt'] ?? b['sendAt'] ?? DateTime(2000);
+      return (bDate as DateTime).compareTo(aDate as DateTime);
+    });
+
+    if (allHistory.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.history_outlined, size: 64, color: Colors.grey[300]),
+              const SizedBox(height: 16),
+              Text('No donation history yet', style: TextStyle(color: Colors.grey[600])),
+              const SizedBox(height: 8),
+              Text('Donations will appear here once recorded', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+            ],
+          ),
         ),
-      ),
+      );
+    }
+
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(12),
+      itemCount: allHistory.length > 10 ? 10 : allHistory.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final item = allHistory[index];
+        final isDonation = item['type'] == 'donation';
+        final date = item['handledAt'] ?? item['sentAt'] ?? item['sendAt'];
+        final dateStr = date is DateTime 
+            ? '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}'
+            : date?.toString() ?? 'N/A';
+        final cooldownUntil = item['cooldownUntil'];
+        final cooldownStr = cooldownUntil is DateTime
+            ? '${cooldownUntil.day}/${cooldownUntil.month}/${cooldownUntil.year}'
+            : null;
+        final isCooledDown = cooldownUntil is DateTime && cooldownUntil.isBefore(DateTime.now());
+
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: isDonation ? Colors.green.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+            child: Icon(
+              isDonation ? Icons.bloodtype : Icons.notifications_active,
+              color: isDonation ? Colors.green : Colors.blue,
+              size: 20,
+            ),
+          ),
+          title: Text(
+            isDonation 
+                ? '${item['donorName'] ?? 'Donor'} donated ${item['bloodGroup'] ?? ''}'
+                : 'Reminder sent to ${item['donorName'] ?? item['donorEmail'] ?? 'Donor'}',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            isDonation 
+                ? (cooldownStr != null 
+                    ? 'Donated: $dateStr  •  Eligible after: $cooldownStr ${isCooledDown ? '✅' : '⏳'}'
+                    : 'Donated: $dateStr')
+                : 'Sent: $dateStr',
+            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+          ),
+          isThreeLine: false,
+        );
+      },
     );
   }
 
   Widget _remindersList() {
-    return Padding(
-      padding: EdgeInsets.all(20),
-      child: Center(
-        child: Column(
-          children: [
-            Icon(Icons.notifications_none, size: 64, color: Colors.grey[300]),
-            SizedBox(height: 16),
-            Text('No reminders scheduled', style: TextStyle(color: Colors.grey[600])),
-            SizedBox(height: 8),
-            Text('Eligibility reminders will appear here', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
-          ],
+    if (_isLoadingReminders) {
+      return const Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_donationReminders.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.notifications_none, size: 64, color: Colors.grey[300]),
+              const SizedBox(height: 16),
+              Text('No reminders scheduled', style: TextStyle(color: Colors.grey[600])),
+              const SizedBox(height: 8),
+              Text('Eligibility reminders will appear here when donations are approved', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+            ],
+          ),
         ),
-      ),
+      );
+    }
+
+    // Manual "Check Now" button + pending reminders list
+    return Column(
+      children: [
+        // Check Now button
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                setState(() => _isLoadingReminders = true);
+                await _checkAndSendDueReminders();
+                await _loadReminders();
+                if (mounted) {
+                  _showSnack('Checked for due reminders!');
+                }
+              },
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Check & Send Due Reminders Now', style: TextStyle(fontSize: 13)),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.black,
+                side: const BorderSide(color: Colors.black, width: 2),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+        ),
+        // Pending reminders list
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          itemCount: _donationReminders.length > 10 ? 10 : _donationReminders.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final reminder = _donationReminders[index];
+            final sendAt = reminder['sendAt'] is DateTime 
+                ? reminder['sendAt'] as DateTime
+                : DateTime.now();
+            final isDue = sendAt.isBefore(DateTime.now());
+            final daysLeft = sendAt.difference(DateTime.now()).inDays;
+            final donorName = reminder['donorName']?.toString() ?? reminder['donorEmail']?.toString() ?? 'Donor';
+
+            return ListTile(
+              leading: CircleAvatar(
+                backgroundColor: isDue ? Colors.red.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+                child: Icon(
+                  isDue ? Icons.warning_amber : Icons.schedule,
+                  color: isDue ? Colors.red : Colors.orange,
+                  size: 20,
+                ),
+              ),
+              title: Text(
+                donorName,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                isDue 
+                    ? '⚠️ Due now! Eligible to donate again.'
+                    : '⏳ Eligible in $daysLeft day${daysLeft == 1 ? '' : 's'} (${sendAt.day}/${sendAt.month}/${sendAt.year})',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDue ? Colors.red[700] : Colors.grey[600],
+                  fontWeight: isDue ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+              trailing: isDue
+                  ? const Icon(Icons.check_circle, color: Colors.green, size: 20)
+                  : Text(
+                      '$daysLeft d',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.orange[700]),
+                    ),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -6119,12 +7889,24 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF424242)),
                 ),
               ),
-              // Delete All Messages button (only for messages view)
+              // Delete All button based on view
               if (_selectedCommunicationView == 'messages')
                 IconButton(
                   icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
                   tooltip: 'Delete All Messages',
                   onPressed: () => _confirmDeleteAllMessages(),
+                ),
+              if (_selectedCommunicationView == 'chats')
+                IconButton(
+                  icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
+                  tooltip: 'Delete All Chats',
+                  onPressed: () => _confirmDeleteAllChats(),
+                ),
+              if (_selectedCommunicationView == 'broadcasts')
+                IconButton(
+                  icon: Icon(Icons.delete_sweep, color: Colors.red[700]),
+                  tooltip: 'Delete All Broadcasts',
+                  onPressed: () => _confirmDeleteAllBroadcasts(),
                 ),
             ],
           ),
@@ -6210,32 +7992,45 @@ class _AdminDashboardState extends State<AdminDashboard> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 13, color: Colors.grey[700]),
             ),
-            trailing: SizedBox(
-              width: 70,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    timeAgo,
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                    overflow: TextOverflow.ellipsis,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 70,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        timeAgo,
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if ((chat['unreadCount'] ?? 0) > 0)
+                        Container(
+                          margin: EdgeInsets.only(top: 4),
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.purple,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            'New',
+                            style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                    ],
                   ),
-                  if ((chat['unreadCount'] ?? 0) > 0)
-                    Container(
-                      margin: EdgeInsets.only(top: 4),
-                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.purple,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        'New',
-                        style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                ],
-              ),
+                ),
+                SizedBox(width: 4),
+                IconButton(
+                  icon: Icon(Icons.delete_outline, color: Colors.red[400], size: 20),
+                  tooltip: 'Delete Chat',
+                  padding: EdgeInsets.all(4),
+                  constraints: BoxConstraints(),
+                  onPressed: () => _confirmDeleteChat(chat, i),
+                ),
+              ],
             ),
           ),
         );
@@ -6751,6 +8546,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ],
                       ),
                     ),
+                    SizedBox(width: 4),
+                    IconButton(
+                      icon: Icon(Icons.delete_outline, color: Colors.red[400], size: 20),
+                      tooltip: 'Delete Broadcast',
+                      padding: EdgeInsets.all(4),
+                      constraints: BoxConstraints(),
+                      onPressed: () => _confirmDeleteBroadcast(broadcast, i),
+                    ),
                   ],
                 ),
                 SizedBox(height: 12),
@@ -7004,7 +8807,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             backgroundColor: medalColor,
             child: Text('$rank', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
-          title: Text(l['name'] as String? ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600)),
+          title: Text(l['name'] as String? ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
           subtitle: Text('${l['email'] ?? ''}'),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
@@ -7324,7 +9127,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ),
                     ],
                   ),
-                  title: Text(data['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600)),
+                  title: Text(data['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
                   subtitle: Text('${data['email'] ?? 'N/A'} • ${data['contact'] ?? 'No contact'}'),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -7416,7 +9219,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ),
                     ],
                   ),
-                  title: Text(data['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600)),
+                  title: Text(data['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
                   subtitle: Text('${data['email'] ?? 'N/A'} • ${data['contact'] ?? 'No contact'}'),
                   trailing: Container(
                     padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -7520,7 +9323,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   style: TextStyle(color: Colors.orange[800], fontWeight: FontWeight.bold, fontSize: 12),
                 ),
               ),
-              title: Text(displayName, style: TextStyle(fontWeight: FontWeight.w600)),
+              title: Text(displayName, style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 'Submitted: $submitted${cnic.isNotEmpty ? ' • CNIC: $cnic' : ''}',
               ),
@@ -7605,7 +9408,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ],
               ),
-              title: Text((v['name'] ?? 'Unknown').toString(), style: TextStyle(fontWeight: FontWeight.w600)),
+              title: Text((v['name'] ?? 'Unknown').toString(), style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text('$donations donations'),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -7673,7 +9476,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ],
               ),
-              title: Text((v['name'] ?? 'Unknown').toString(), style: TextStyle(fontWeight: FontWeight.w600)),
+              title: Text((v['name'] ?? 'Unknown').toString(), style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text('$receivedCount blood received'),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -7939,6 +9742,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   // =====================================================================
+  // M6.5: Document Verification Module
+  // =====================================================================
+  Widget _buildDocumentVerificationModule() {
+    return DocumentVerificationScreen();
+  }
+
+  // =====================================================================
   // M7: Hospital / Blood Bank Request Management
   // =====================================================================
   Widget _buildHospitalBankModule() {
@@ -7980,23 +9790,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       Expanded(
                         child: Text(
                           'All Blood Banks & Hospitals',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF388E3C)),
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF388E3C)),
                           overflow: TextOverflow.ellipsis,
                           maxLines: 1,
                         ),
                       ),
-                      SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        icon: Icon(Icons.add, size: 18),
-                        label: Text('Add Blood Bank'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF388E3C),
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
+                      SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(Icons.add_circle, color: Color(0xFF388E3C), size: 28),
+                        tooltip: 'Add Blood Bank',
                         onPressed: _addBloodBank,
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(),
                       ),
-                      SizedBox(width: 8),
+                      SizedBox(width: 2),
                       IconButton(
                         icon: Icon(Icons.refresh, color: Color(0xFF388E3C)),
                         onPressed: _loadBloodBanks,
@@ -8016,19 +9823,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           SizedBox(height: 16),
                           Text('No blood banks added yet', style: TextStyle(fontSize: 16, color: Colors.grey)),
                           SizedBox(height: 8),
-                          Text('Click "Add Blood Bank" to get started', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text('Tap + to add a blood bank', style: TextStyle(fontSize: 12, color: Colors.grey)),
                         ],
                       ),
                     ),
                   )
                 else
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: 500),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: _bloodBanks.length,
-                      itemBuilder: (context, i) => _buildBloodBankCard(_bloodBanks[i]),
-                    ),
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: NeverScrollableScrollPhysics(),
+                    itemCount: _bloodBanks.length,
+                    itemBuilder: (context, i) => _buildBloodBankCard(_bloodBanks[i]),
                   ),
               ],
             ),
@@ -8068,7 +9873,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ),
         title: Text(
           bank['name'] ?? 'Unknown',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
           [
@@ -8077,7 +9884,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             if (bank['phone'] != null && (bank['phone'] as String).isNotEmpty)
               bank['phone'],
           ].whereType<String>().join(' • '),
-          style: TextStyle(fontSize: 13),
+          style: TextStyle(fontSize: 12),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
@@ -8085,28 +9892,27 @@ class _AdminDashboardState extends State<AdminDashboard> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               decoration: BoxDecoration(
                 color: Colors.blue.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
                 '$totalUnits',
-                style: TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 10, color: Colors.blue, fontWeight: FontWeight.bold),
               ),
             ),
-            SizedBox(width: 4),
             IconButton(
-              icon: Icon(Icons.edit, color: Colors.blue, size: 20),
+              icon: Icon(Icons.edit, color: Colors.blue, size: 18),
               tooltip: 'Edit',
-              padding: EdgeInsets.all(4),
+              padding: EdgeInsets.all(2),
               constraints: BoxConstraints(),
               onPressed: () => _editBloodBank(bank),
             ),
             IconButton(
-              icon: Icon(Icons.delete, color: Colors.red, size: 20),
+              icon: Icon(Icons.delete, color: Colors.red, size: 18),
               tooltip: 'Delete',
-              padding: EdgeInsets.all(4),
+              padding: EdgeInsets.all(2),
               constraints: BoxConstraints(),
               onPressed: () => _deleteBloodBank(bank),
             ),
@@ -8140,53 +9946,69 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Blood Inventory', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
-                    ElevatedButton.icon(
-                      onPressed: () => _manageInventory(bank),
-                      icon: Icon(Icons.inventory, size: 16),
-                      label: Text('Manage Inventory'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFF388E3C),
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        elevation: 0,
+                    Expanded(
+                      child: Text('Blood Inventory', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    ),
+                    SizedBox(width: 8),
+                    InkWell(
+                      onTap: () => _manageInventory(bank),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Color(0xFF388E3C),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.inventory, size: 14, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text('Manage', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w500)),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
                 SizedBox(height: 16),
                 
-                // Inventory Grid
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: NeverScrollableScrollPhysics(),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    childAspectRatio: 1.3,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemCount: 8,
-                  itemBuilder: (context, i) {
-                    final types = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
-                    final type = types[i];
-                    final units = inventory[type] as int? ?? 0;
-                    Color statusColor = units > 20 ? Colors.green : units > 10 ? Colors.orange : Colors.red;
-                    
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: statusColor.withOpacity(0.4), width: 1.5),
+                // Inventory Grid - responsive crossAxisCount
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final crossAxisCount = constraints.maxWidth < 280 ? 3 : 4;
+                    return GridView.builder(
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        childAspectRatio: 1.3,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
                       ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(type, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: statusColor)),
-                          SizedBox(height: 4),
-                          Text('$units units', style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w500)),
-                        ],
-                      ),
+                      itemCount: 8,
+                      itemBuilder: (context, i) {
+                        final types = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
+                        final type = types[i];
+                        final units = inventory[type] as int? ?? 0;
+                        Color statusColor = units > 20 ? Colors.green : units > 10 ? Colors.orange : Colors.red;
+                        
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: statusColor.withOpacity(0.4), width: 1.5),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(type, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: statusColor)),
+                              SizedBox(height: 2),
+                              Text('$units units', style: TextStyle(fontSize: 11, color: Colors.grey[700], fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -8369,40 +10191,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   SizedBox(height: 16),
                   _monthlyTrendsChart(),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          
-          // Export Options
-          Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Export Reports', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  SizedBox(height: 12),
-                  Wrap(
-                    spacing: 12,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () => _showSnack('Exporting PDF...', isWarning: true),
-                        icon: Icon(Icons.picture_as_pdf),
-                        label: Text('PDF Report'),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: () => _showSnack('Exporting Excel...', isWarning: true),
-                        icon: Icon(Icons.table_chart),
-                        label: Text('Excel Export'),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                      ),
-                    ],
-                  ),
                 ],
               ),
             ),
@@ -8810,26 +10598,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _moduleHeader('AI Matching & Prediction', Icons.auto_awesome, Color(0xFFD32F2F)),
+          const SizedBox(height: 12),
+          Text('AI-powered donor matching and blood demand prediction', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
           const SizedBox(height: 16),
           
-          // AI Stats
-          Row(
-            children: [
-              Expanded(child: _miniStatCard('Match Accuracy', '96%', Icons.check_circle, Colors.green)),
-              SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Predictions Made', '892', Icons.psychology, Colors.purple)),
-              SizedBox(width: 12),
-              Expanded(child: _miniStatCard('Avg Match Time', '4.2s', Icons.speed, Colors.blue)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          
-          // AI Matching Demo
+          // Smart Donor Matching Card
           Card(
             elevation: 3,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             child: Padding(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -8840,146 +10618,466 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       Text('Smart Donor Matching', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ],
                   ),
-                  SizedBox(height: 16),
-                  Text('Enter blood group to find compatible donors:', style: TextStyle(color: Colors.grey[600])),
+                  SizedBox(height: 12),
+                  Text('Select blood group to find compatible donors:', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                   SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          dropdownColor: Colors.white.withOpacity(0.95),
+                          value: _aiSelectedBloodGroup,
+                          dropdownColor: Colors.white,
                           decoration: InputDecoration(
                             labelText: 'Required Blood Group',
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           ),
                           items: ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
                               .map((bg) => DropdownMenuItem(value: bg, child: Text(bg)))
                               .toList(),
-                          onChanged: (_) {},
+                          onChanged: (v) => setState(() { _aiSelectedBloodGroup = v; _aiHasSearched = false; }),
                         ),
                       ),
                       SizedBox(width: 12),
                       ElevatedButton.icon(
-                        onPressed: () {
-                          _showSnack('Finding compatible donors...');
-                        },
-                        icon: Icon(Icons.search),
-                        label: Text('Find Matches'),
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          foregroundColor: Colors.black,
-                          side: BorderSide(color: Colors.black, width: 2),
-                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                        onPressed: (_aiSelectedBloodGroup != null && !_aiIsMatching)
+                            ? _performAIMatching
+                            : null,
+                        icon: _aiIsMatching
+                            ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : Icon(Icons.search),
+                        label: Text(_aiIsMatching ? 'Matching...' : 'Find Matches'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Color(0xFFD32F2F),
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
                       ),
                     ],
                   ),
+                  if (_aiHasSearched) ...[
+                    SizedBox(height: 16),
+                    if (_aiMatchedDonors.isEmpty)
+                      Container(
+                        padding: EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline, color: Colors.orange.shade700, size: 20),
+                            SizedBox(width: 8),
+                            Text('No matching donors found for $_aiSelectedBloodGroup', style: TextStyle(color: Colors.orange.shade800)),
+                          ],
+                        ),
+                      )
+                    else
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Found ${_aiMatchedDonors.length} compatible donor(s):', 
+                            style: TextStyle(fontWeight: FontWeight.w600, color: Colors.green.shade700)),
+                          SizedBox(height: 8),
+                          ..._aiMatchedDonors.take(5).map((d) => Container(
+                            margin: EdgeInsets.only(bottom: 8),
+                            padding: EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.green.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  backgroundColor: Color(0xFFD32F2F),
+                                  radius: 18,
+                                  child: Text(
+                                    (d['name'] ?? '?').toString().isNotEmpty 
+                                        ? (d['name'] as String)[0].toUpperCase() 
+                                        : '?',
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(d['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                      Text('${d['location'] ?? 'N/A'}  •  ${d['contact'] ?? 'N/A'}', 
+                                        style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Color(0xFFD32F2F),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(d['bloodGroup'] ?? '', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                                ),
+                              ],
+                            ),
+                          )),
+                        ],
+                      ),
+                  ],
                 ],
               ),
             ),
           ),
           const SizedBox(height: 16),
           
-          // Demand Prediction
-          Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.insights, color: Colors.blue),
-                      SizedBox(width: 8),
-                      Text('Blood Demand Prediction', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  SizedBox(height: 16),
-                  _demandPredictionList(),
-                ],
-              ),
-            ),
-          ),
+          // Demand Prediction (real data)
+          _buildDemandPredictionCard(),
           const SizedBox(height: 16),
           
-          // AI Insights
-          Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFFD32F2F).withOpacity(0.1), Colors.white],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.lightbulb, color: Colors.amber),
-                      SizedBox(width: 8),
-                      Text('AI Insights', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  SizedBox(height: 12),
-                  _aiInsightTile(Icons.warning_amber, 'O- blood group demand expected to increase by 15% next week', Colors.orange),
-                  _aiInsightTile(Icons.check_circle, '12 donors in area will become eligible within 7 days', Colors.green),
-                  _aiInsightTile(Icons.trending_up, 'Emergency requests typically peak on weekends', Colors.blue),
-                ],
-              ),
-            ),
-          ),
+          // AI Insights (real data)
+          _buildAIInsightsCard(),
         ],
       ),
     );
   }
 
-  Widget _demandPredictionList() {
-    final predictions = [
-      {'type': 'O-', 'current': 5, 'predicted': 12, 'trend': 'up'},
-      {'type': 'A+', 'current': 8, 'predicted': 10, 'trend': 'up'},
-      {'type': 'B+', 'current': 6, 'predicted': 5, 'trend': 'down'},
-      {'type': 'AB-', 'current': 3, 'predicted': 4, 'trend': 'up'},
-    ];
-    
-    return Column(
-      children: predictions.map((p) {
-        bool isUp = p['trend'] == 'up';
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: Colors.red[50],
-            child: Text(p['type'] as String, style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold, fontSize: 12)),
-          ),
-          title: Text('Current: ${p['current']} units', style: TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('Predicted (7 days): ${p['predicted']} units'),
-          trailing: Icon(
-            isUp ? Icons.trending_up : Icons.trending_down,
-            color: isUp ? Colors.red : Colors.green,
+  Future<void> _performAIMatching() async {
+    if (_aiSelectedBloodGroup == null) return;
+    setState(() { _aiIsMatching = true; _aiHasSearched = false; });
+
+    try {
+      List<Map<String, dynamic>> matched = [];
+
+      if (FirebaseService.initialized) {
+        // Get compatible blood groups
+        final compatibleGroups = _getCompatibleBloodGroups(_aiSelectedBloodGroup!);
+        
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'donor')
+            .where('approved', isEqualTo: true)
+            .get();
+
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          final donorBg = (data['bloodGroup'] ?? '').toString();
+          if (compatibleGroups.contains(donorBg)) {
+            matched.add({
+              'name': data['name'] ?? 'Unknown',
+              'bloodGroup': donorBg,
+              'location': data['location'] ?? 'N/A',
+              'contact': data['contact'] ?? 'N/A',
+              'email': data['email'] ?? '',
+            });
+          }
+        }
+      } else {
+        // Demo mode: query from SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? [];
+        final compatibleGroups = _getCompatibleBloodGroups(_aiSelectedBloodGroup!);
+        
+        for (final u in users) {
+          try {
+            final data = jsonDecode(u) as Map<String, dynamic>;
+            if (data['role'] == 'donor' && data['approved'] == true) {
+              final donorBg = (data['bloodGroup'] ?? '').toString();
+              if (compatibleGroups.contains(donorBg)) {
+                matched.add({
+                  'name': data['name'] ?? 'Unknown',
+                  'bloodGroup': donorBg,
+                  'location': data['location'] ?? 'N/A',
+                  'contact': data['contact'] ?? 'N/A',
+                  'email': data['email'] ?? '',
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _aiMatchedDonors = matched;
+          _aiIsMatching = false;
+          _aiHasSearched = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() { _aiIsMatching = false; _aiHasSearched = true; });
+        _showSnack('Error: $e', isError: true);
+      }
+    }
+  }
+
+  List<String> _getCompatibleBloodGroups(String bloodGroup) {
+    switch (bloodGroup) {
+      case 'O-': return ['O-'];
+      case 'O+': return ['O-', 'O+'];
+      case 'A-': return ['O-', 'A-'];
+      case 'A+': return ['O-', 'O+', 'A-', 'A+'];
+      case 'B-': return ['O-', 'B-'];
+      case 'B+': return ['O-', 'O+', 'B-', 'B+'];
+      case 'AB-': return ['O-', 'A-', 'B-', 'AB-'];
+      case 'AB+': return ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'];
+      default: return [bloodGroup];
+    }
+  }
+
+  Widget _buildDemandPredictionCard() {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _calculateDemandPredictions(),
+      builder: (context, snap) {
+        final predictions = snap.data?['predictions'] as List<Map<String, dynamic>>? ?? [];
+        final totalRequests = snap.data?['totalRequests'] as int? ?? 0;
+
+        return Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.insights, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Blood Demand Prediction', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                SizedBox(height: 4),
+                Text('Based on $totalRequests total requests', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                SizedBox(height: 12),
+                if (predictions.isEmpty)
+                  Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: Text('No request data available for predictions', style: TextStyle(color: Colors.grey))),
+                  )
+                else
+                  ...predictions.map((p) {
+                    final isUp = (p['trend'] as String) == 'up';
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.red.shade50,
+                        child: Text(p['type'] as String, style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
+                      ),
+                      title: Text('Current: ${p['current']} requests', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                      subtitle: Text('Predicted (7 days): ${p['predicted']} requests', style: TextStyle(fontSize: 12)),
+                      trailing: Icon(
+                        isUp ? Icons.trending_up : Icons.trending_down,
+                        color: isUp ? Colors.red : Colors.green,
+                      ),
+                    );
+                  }),
+              ],
+            ),
           ),
         );
-      }).toList(),
+      },
     );
   }
 
-  Widget _aiInsightTile(IconData icon, String text, Color color) {
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 20),
-          SizedBox(width: 12),
-          Expanded(child: Text(text, style: TextStyle(fontSize: 13))),
-        ],
-      ),
+  Future<Map<String, dynamic>> _calculateDemandPredictions() async {
+    final bloodGroups = ['O-', 'O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
+    final Map<String, int> counts = {for (var bg in bloodGroups) bg: 0};
+    int totalRequests = 0;
+
+    try {
+      if (FirebaseService.initialized) {
+        final snap = await FirebaseFirestore.instance
+            .collection('donor_requests')
+            .get();
+        
+        for (final doc in snap.docs) {
+          final bg = (doc.data()['bloodGroup'] ?? '').toString();
+          if (counts.containsKey(bg)) {
+            counts[bg] = (counts[bg] ?? 0) + 1;
+            totalRequests++;
+          }
+        }
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final requests = prefs.getStringList('donor_requests') ?? [];
+        for (final r in requests) {
+          try {
+            final data = jsonDecode(r) as Map<String, dynamic>;
+            final bg = (data['bloodGroup'] ?? '').toString();
+            if (counts.containsKey(bg)) {
+              counts[bg] = (counts[bg] ?? 0) + 1;
+              totalRequests++;
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    final predictions = bloodGroups
+        .where((bg) => (counts[bg] ?? 0) > 0)
+        .map((bg) {
+          final current = counts[bg] ?? 0;
+          final predicted = (current * 1.3).round(); // 30% increase prediction
+          return {
+            'type': bg,
+            'current': current,
+            'predicted': predicted,
+            'trend': predicted > current ? 'up' : 'down',
+          };
+        })
+        .toList()
+      ..sort((a, b) => (b['current'] as int).compareTo(a['current'] as int));
+
+    return {'predictions': predictions, 'totalRequests': totalRequests};
+  }
+
+  Widget _buildAIInsightsCard() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _generateAIInsights(),
+      builder: (context, snap) {
+        final insights = snap.data ?? [];
+
+        return Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFD32F2F).withOpacity(0.08), Colors.white],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.lightbulb, color: Colors.amber.shade700),
+                    SizedBox(width: 8),
+                    Text('AI Insights', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                SizedBox(height: 12),
+                if (insights.isEmpty)
+                  Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text('Collecting data for insights...', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                  )
+                else
+                  ...insights.map((insight) => Padding(
+                    padding: EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(insight['icon'] as IconData, color: insight['color'] as Color, size: 20),
+                        SizedBox(width: 12),
+                        Expanded(child: Text(insight['text'] as String, style: TextStyle(fontSize: 13))),
+                      ],
+                    ),
+                  )),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  Future<List<Map<String, dynamic>>> _generateAIInsights() async {
+    final insights = <Map<String, dynamic>>[];
+    
+    try {
+      if (FirebaseService.initialized) {
+        // Count total donors
+        final donorsSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('role', isEqualTo: 'donor')
+            .where('approved', isEqualTo: true)
+            .get();
+        final totalDonors = donorsSnap.docs.length;
+
+        // Count pending requests
+        final requestsSnap = await FirebaseFirestore.instance
+            .collection('donor_requests')
+            .where('status', isEqualTo: 'pending')
+            .get();
+        final pendingRequests = requestsSnap.docs.length;
+
+        // Count emergency requests
+        final emergencySnap = await FirebaseFirestore.instance
+            .collection('emergency_requests')
+            .where('status', isEqualTo: 'pending')
+            .get();
+        final pendingEmergencies = emergencySnap.docs.length;
+
+        if (totalDonors < 5) {
+          insights.add({'icon': Icons.warning_amber, 'text': 'Low donor count ($totalDonors). Consider running a blood donation campaign.', 'color': Colors.orange});
+        } else {
+          insights.add({'icon': Icons.check_circle, 'text': '$totalDonors approved donors available in the system.', 'color': Colors.green});
+        }
+
+        if (pendingRequests > 0) {
+          insights.add({'icon': Icons.pending_actions, 'text': '$pendingRequests pending donor requests need your attention.', 'color': Colors.blue});
+        }
+
+        if (pendingEmergencies > 0) {
+          insights.add({'icon': Icons.emergency, 'text': '$pendingEmergencies emergency requests are unhandled.', 'color': Colors.red});
+        }
+
+        // Find most requested blood group
+        final allReqs = await FirebaseFirestore.instance.collection('donor_requests').get();
+        final bgCount = <String, int>{};
+        for (final doc in allReqs.docs) {
+          final bg = (doc.data()['bloodGroup'] ?? '').toString();
+          if (bg.isNotEmpty) bgCount[bg] = (bgCount[bg] ?? 0) + 1;
+        }
+        if (bgCount.isNotEmpty) {
+          final mostRequested = bgCount.entries.reduce((a, b) => a.value > b.value ? a : b);
+          insights.add({'icon': Icons.trending_up, 'text': '${mostRequested.key} is the most requested blood group (${mostRequested.value} requests).', 'color': Colors.purple});
+        }
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? [];
+        final totalDonors = users.where((u) {
+          try { final d = jsonDecode(u); return d['role'] == 'donor' && d['approved'] == true; } catch (_) { return false; }
+        }).length;
+        final requests = prefs.getStringList('donor_requests') ?? [];
+        final pendingRequests = requests.where((r) {
+          try { return (jsonDecode(r)['status'] ?? '') == 'pending'; } catch (_) { return false; }
+        }).length;
+
+        if (totalDonors < 5) {
+          insights.add({'icon': Icons.warning_amber, 'text': 'Low donor count ($totalDonors). Consider running a blood donation campaign.', 'color': Colors.orange});
+        } else {
+          insights.add({'icon': Icons.check_circle, 'text': '$totalDonors approved donors available in the system.', 'color': Colors.green});
+        }
+        if (pendingRequests > 0) {
+          insights.add({'icon': Icons.pending_actions, 'text': '$pendingRequests pending donor requests need your attention.', 'color': Colors.blue});
+        }
+        
+        final bgCount = <String, int>{};
+        for (final r in requests) {
+          try { final d = jsonDecode(r); final bg = (d['bloodGroup'] ?? '').toString(); if (bg.isNotEmpty) bgCount[bg] = (bgCount[bg] ?? 0) + 1; } catch (_) {}
+        }
+        if (bgCount.isNotEmpty) {
+          final mostRequested = bgCount.entries.reduce((a, b) => a.value > b.value ? a : b);
+          insights.add({'icon': Icons.trending_up, 'text': '${mostRequested.key} is the most requested blood group (${mostRequested.value} requests).', 'color': Colors.purple});
+        }
+      }
+    } catch (e) {
+      print('Error generating AI insights: $e');
+    }
+
+    if (insights.isEmpty) {
+      insights.add({'icon': Icons.info_outline, 'text': 'Not enough data to generate insights yet. System will learn as more data is collected.', 'color': Colors.grey});
+    }
+
+    return insights;
   }
 
   // =====================================================================

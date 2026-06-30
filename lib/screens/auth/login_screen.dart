@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../widgets/animated_blood_bg.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 import 'register_screen.dart';
 import '../home/home_screen.dart';
 import '../admin/admin_dashboard.dart';
@@ -90,21 +91,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _showTopSnackBar(String message, {bool isError = true}) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: TextStyle(color: Colors.white)),
-        backgroundColor: isError ? Colors.red.shade700 : Colors.green.shade700,
-        duration: Duration(seconds: 4),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: 16,
-          right: 16,
-          left: MediaQuery.of(context).size.width * 0.5,
-          bottom: MediaQuery.of(context).size.height - 130,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+    showTopSnackBar(
+      context,
+      message: message,
+      backgroundColor: isError ? Colors.red.shade700 : Colors.green.shade700,
     );
   }
 

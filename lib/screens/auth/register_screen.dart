@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../widgets/animated_blood_bg.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 import '../../theme.dart';
 import 'login_screen.dart';
 
@@ -66,41 +67,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: TextStyle(color: Colors.white)),
-        backgroundColor: Colors.red.shade700,
-        duration: Duration(seconds: 3),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: 16,
-          right: 16,
-          left: MediaQuery.of(context).size.width * 0.5,
-          bottom: MediaQuery.of(context).size.height - 130,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    showTopSnackBar(context, message: message, backgroundColor: Colors.red.shade700);
   }
 
   void _showSuccess(String message) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: TextStyle(color: Colors.white)),
-        backgroundColor: Colors.green.shade700,
-        duration: Duration(seconds: 3),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: 16,
-          right: 16,
-          left: MediaQuery.of(context).size.width * 0.5,
-          bottom: MediaQuery.of(context).size.height - 130,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    showTopSnackBar(context, message: message, backgroundColor: Colors.green.shade700);
   }
 
   bool _isValidEmail(String email) => email.contains('@');
@@ -269,22 +240,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (mounted) {
         Navigator.of(context).pop(); // Close loading dialog
         
-        // Show success message at top right
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Account created successfully! Please login.', style: TextStyle(color: Colors.white)),
-            backgroundColor: Colors.green.shade700,
-            duration: Duration(seconds: 3),
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              top: 16,
-              right: 16,
-              left: MediaQuery.of(context).size.width * 0.5,
-              bottom: MediaQuery.of(context).size.height - 130,
-            ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
+        // Show success message at top
+        _showSuccess('✅ Account created successfully! Please login.');
         
         // Navigate to login screen
         await Future.delayed(Duration(milliseconds: 500));

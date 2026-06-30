@@ -1,0 +1,33 @@
+APPCIRCLE - FREE ONLINE FLUTTER BUILD SERVICE
+==============================================
+
+FASTEST WAY TO GET YOUR AAB FILE (NO INSTALLATION NEEDED)
+
+Steps:
+------
+1. Go to: https://appcircle.io/
+
+2. Click "Start Free Trial" (Free forever for open source)
+
+3. Connect with GitHub or Upload ZIP:
+   - ZIP ready at: /Users/apple/Documents/Blood_Bridge/BloodBridge.zip
+
+4. Select "Build Profile" → "Flutter Android"
+
+5. Click "Start Build"
+
+6. Wait 5-10 minutes
+
+7. Download .aab file from "Artifacts"
+
+DONE! You have your latest AAB with all fixes ✅
+
+Alternative Services (All Free):
+---------------------------------
+- Codemagic: https://codemagic.io
+- GitHub Actions: https://github.com/features/actions  
+- Bitrise: https://bitrise.io
+
+Your ZIP file is ready:
+/Users/apple/Documents/Blood_Bridge/BloodBridge.zip (1.1 MB)
+

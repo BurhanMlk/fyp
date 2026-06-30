@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/firebase_service.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> currentData;
@@ -57,20 +58,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final location = _locationCtl.text.trim();
 
     if (name.isEmpty || contact.isEmpty || designation.isEmpty || age == 0 || location.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Please fill all fields'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            top: 16,
-            right: 16,
-            left: MediaQuery.of(context).size.width * 0.5,
-            bottom: MediaQuery.of(context).size.height - 130,
-          ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+      showTopSnackBar(context, message: 'Please fill all fields', backgroundColor: Colors.red);
       return;
     }
 
@@ -131,36 +119,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       Navigator.of(context).pop(); // Close loading dialog
       Navigator.of(context).pop(true); // Return to profile with success
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Profile updated successfully!'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            top: 16,
-            right: 16,
-            left: MediaQuery.of(context).size.width * 0.5,
-            bottom: MediaQuery.of(context).size.height - 130,
-          ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+      showTopSnackBar(context, message: 'Profile updated successfully!', backgroundColor: Colors.green);
     } catch (e) {
       Navigator.of(context).pop(); // Close loading dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update profile: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            top: 16,
-            right: 16,
-            left: MediaQuery.of(context).size.width * 0.5,
-            bottom: MediaQuery.of(context).size.height - 130,
-          ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+      showTopSnackBar(context, message: 'Failed to update profile: $e', backgroundColor: Colors.red);
     }
   }
 

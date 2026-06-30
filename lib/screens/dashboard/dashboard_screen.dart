@@ -5,11 +5,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../../services/firebase_service.dart';
 import '../../widgets/animated_blood_bg.dart';
+import '../../widgets/top_snackbar.dart';
 import '../profile/profile_screen.dart';
+import '../profile/document_upload_screen.dart';
 import '../emergency/emergency_request_screen.dart';
 import '../donors/donor_list_screen.dart';
 import 'all_users_screen.dart';
-import 'pending_requests_screen.dart';
 import 'donors_detail_screen.dart';
 import 'recipients_detail_screen.dart';
 import 'package:image_picker/image_picker.dart';
@@ -384,10 +385,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (_userRole == 'recipient')
                 _buildQuickActionCard(
                   'Verification Status',
-                  'Check your verification and reputation',
+                  'Upload ID Card & Blood Test Report for verification',
                   Icons.verified_user,
                   Colors.blue.shade600,
-                  onTap: () => _showVerificationDialog(),
+                  onTap: () => _navigateToDocumentUpload(),
                 ),
               if (_userRole == 'recipient') SizedBox(height: 12),
               
@@ -413,6 +414,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // =====================================================================
   
   void _showDonationHistoryDialog() {
+    final screenHeight = MediaQuery.of(context).size.height;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -425,25 +427,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Icon(Icons.history, color: Colors.teal),
             SizedBox(width: 8),
-            Text('Donation History'),
+            Expanded(
+              child: Text(
+                'Donation History',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         content: SizedBox(
-          width: 400,
-          height: 400,
+          width: double.maxFinite,
+          height: screenHeight * 0.55,
           child: _userRole == 'donor' ? _buildDonorHistory() : _buildRecipientHistory(),
         ),
         actions: [
           OutlinedButton(
             onPressed: () => Navigator.pop(context),
             style: OutlinedButton.styleFrom(
-              backgroundColor: Colors.transparent,
-              foregroundColor: Colors.black,
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
               side: BorderSide(color: Colors.black, width: 2),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
-            child: Text('Close'),
+            child: Text('Close', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -473,6 +480,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         }
         return ListView.builder(
+          shrinkWrap: true,
           itemCount: donations.length,
           itemBuilder: (context, i) {
             final d = donations[i];
@@ -488,7 +496,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   backgroundColor: Colors.red[50],
                   child: Icon(Icons.water_drop, color: Colors.red),
                 ),
-                title: Text(d['location'] ?? 'Blood Donation'),
+                title: Text(d['location'] ?? 'Blood Donation', maxLines: 2, overflow: TextOverflow.ellipsis),
                 subtitle: Text(d['date'] ?? 'Unknown date'),
                 trailing: Icon(Icons.check_circle, color: Colors.green),
               ),
@@ -520,6 +528,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         }
         return ListView.builder(
+          shrinkWrap: true,
           itemCount: received.length,
           itemBuilder: (context, i) {
             final r = received[i];
@@ -535,7 +544,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   backgroundColor: Colors.green[50],
                   child: Icon(Icons.favorite, color: Colors.green),
                 ),
-                title: Text('Blood received from ${r['donor'] ?? 'Anonymous'}'),
+                title: Text('Blood received from ${r['donor'] ?? 'Anonymous'}', maxLines: 2, overflow: TextOverflow.ellipsis),
                 subtitle: Text(r['date'] ?? 'Unknown date'),
               ),
             );
@@ -900,14 +909,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                               messageCtl.clear();
                             } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Error sending message: $e'), backgroundColor: Colors.red),
-                              );
+                              showTopSnackBar(context, message: 'Error sending message: $e', backgroundColor: Colors.red);
                             }
                           } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Message sent! (Demo mode)'), backgroundColor: Colors.green),
-                            );
+                            showTopSnackBar(context, message: 'Message sent! (Demo mode)', backgroundColor: Colors.green);
                             messageCtl.clear();
                           }
                         }
@@ -1047,12 +1052,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       OutlinedButton.icon(
                         onPressed: () {
                           if (!firstDonationEarned) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Complete your first donation to unlock certificate.'),
-                                backgroundColor: Colors.black87,
-                              ),
-                            );
+                            showTopSnackBar(context, message: 'Complete your first donation to unlock certificate.', backgroundColor: Colors.black87);
                             return;
                           }
                           _showCertificateDialog(donationCount: displayDonationCount);
@@ -1299,12 +1299,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _certificateActionButton(String label, IconData icon) {
     return OutlinedButton.icon(
       onPressed: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$label started'),
-            backgroundColor: Colors.black87,
-          ),
-        );
+        showTopSnackBar(context, message: '$label started', backgroundColor: Colors.black87);
       },
       icon: Icon(icon, size: 18),
       label: Text(label),
@@ -1313,6 +1308,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
         foregroundColor: Colors.black,
         side: BorderSide(color: Colors.black, width: 1.6),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  void _navigateToDocumentUpload() {
+    final userData = {
+      'uid': FirebaseService.initialized 
+          ? FirebaseAuth.instance.currentUser?.uid 
+          : 'demo_user',
+      'name': _userName,
+      'email': _userEmail,
+    };
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DocumentUploadScreen(
+          userRole: _userRole,
+          userData: userData,
+        ),
       ),
     );
   }
@@ -1353,48 +1368,71 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: Colors.white,
         title: Row(
           children: [
-            Icon(Icons.verified_user, color: Colors.blue),
+            Icon(Icons.verified_user, color: Colors.blue, size: 22),
             SizedBox(width: 8),
-            Text('Verification Status'),
+            Expanded(
+              child: Text(
+                'Verification Status',
+                style: TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
-        content: SizedBox(
-          width: 400,
-          height: 270,
-          child: Column(
-            children: [
-              Container(
-                padding: EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: statusColor),
-                ),
-                child: Row(
-                  children: [
-                    Icon(statusIcon, color: statusColor, size: 48),
-                    SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(statusTitle, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: statusColor)),
-                          Text(statusSubtitle, style: TextStyle(color: Colors.grey)),
-                        ],
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: 320,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: statusColor),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(statusIcon, color: statusColor, size: 40),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              statusTitle,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: statusColor,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              statusSubtitle,
+                              style: TextStyle(color: Colors.grey, fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              SizedBox(height: 20),
-              _verificationRow('ID Verification', isVerified),
-              _verificationRow('Medical Certificate', isVerified),
-              _verificationRow(
-                'Blood Test Report',
-                isVerified,
-                isPendingUpload: _hasUploadedDocument && isPending,
-              ),
-            ],
+                SizedBox(height: 16),
+                _verificationRow('🪪 ID Card - Front', isVerified),
+                _verificationRow('🪪 ID Card - Back', isVerified),
+                _verificationRow(
+                  '🩸 Blood Test Report',
+                  isVerified,
+                  isPendingUpload: _hasUploadedDocument && isPending,
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -1405,15 +1443,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
               foregroundColor: Colors.black,
               side: BorderSide(color: Colors.black, width: 2),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
-            child: Text('Close'),
+            child: Text('Close', style: TextStyle(fontSize: 14)),
           ),
-          SizedBox(width: 8),
+          SizedBox(width: 6),
           OutlinedButton.icon(
-            onPressed: _uploadDocument,
-            icon: Icon(isVerified ? Icons.check_circle : Icons.upload_file),
-            label: Text(_hasUploadedDocument ? 'Re-upload Document' : 'Upload Document'),
+            onPressed: () {
+              Navigator.pop(context);
+              _navigateToDocumentUpload();
+            },
+            icon: Icon(isVerified ? Icons.check_circle : Icons.upload_file, size: 18),
+            label: Text(
+              _hasUploadedDocument ? 'Re-upload' : 'Upload',
+              style: TextStyle(fontSize: 13),
+            ),
             style: OutlinedButton.styleFrom(
               backgroundColor: isVerified
                   ? Colors.green[50]
@@ -1428,10 +1472,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 width: 2,
               ),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
           ),
         ],
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 12),
       ),
     );
   }
@@ -1565,19 +1610,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       
       // Show success message
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.white),
-                SizedBox(width: 8),
-                Text('Document uploaded successfully!'),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
-          ),
-        );
+        showTopSnackBar(context, message: 'Document uploaded successfully!', backgroundColor: Colors.green, icon: Icons.check_circle);
       }
     } catch (e) {
       // Close loading dialog if open
@@ -1585,12 +1618,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Navigator.of(context, rootNavigator: true).pop();
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Upload failed: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showTopSnackBar(context, message: 'Upload failed: ${e.toString()}', backgroundColor: Colors.red);
       }
     }
   }
@@ -1609,13 +1637,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Icon(
             verified ? Icons.check_circle : Icons.pending,
             color: statusColor,
+            size: 20,
           ),
           SizedBox(width: 12),
-          Text(label),
-          Spacer(),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 14),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+          SizedBox(width: 8),
           Text(
             statusText,
-            style: TextStyle(color: statusColor, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: statusColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
           ),
         ],
       ),
@@ -1662,14 +1702,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: Colors.white,
         title: Row(
           children: [
-            Icon(Icons.local_hospital, color: Colors.red[700]),
+            Icon(Icons.local_hospital, color: Colors.red[700], size: 22),
             SizedBox(width: 8),
-            Text('Nearby Blood Banks'),
+            Expanded(
+              child: Text(
+                'Nearby Blood Banks',
+                style: TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
           ],
         ),
         content: SizedBox(
-          width: 400,
-          height: 400,
+          width: double.maxFinite,
+          height: MediaQuery.of(context).size.height * 0.55,
           child: FutureBuilder<List<Map<String, dynamic>>>(
             future: _loadBloodBanks(),
             builder: (context, snapshot) {
@@ -1686,19 +1733,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     children: [
                       Icon(Icons.local_hospital, size: 64, color: Colors.grey[300]),
                       SizedBox(height: 16),
-                      Text('Sorry you don\'t have nearest blood bank', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600)),
+                      Text(
+                        'Sorry you don\'t have nearest blood bank',
+                        style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600, fontSize: 14),
+                        textAlign: TextAlign.center,
+                      ),
                       SizedBox(height: 8),
-                      Text('No blood banks in your location yet', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                      Text(
+                        'No blood banks in your location yet',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
                     ],
                   ),
                 );
               }
               
               return ListView.builder(
+                shrinkWrap: true,
                 itemCount: bloodBanks.length,
                 itemBuilder: (context, index) {
                   final bank = bloodBanks[index];
-                  // Try to get location first, fallback to address
                   final displayLocation = (bank['location'] ?? bank['address'] ?? 'Location not available').toString();
                   return _bloodBankTile(
                     bank['name'] ?? 'Blood Bank',
@@ -1717,10 +1772,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               side: BorderSide(color: Colors.black, width: 2),
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             ),
-            child: Text('Close', style: TextStyle(color: Colors.white)),
+            child: Text('Close', style: TextStyle(color: Colors.white, fontSize: 14)),
           ),
         ],
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 12),
       ),
     );
   }
@@ -1733,9 +1790,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           backgroundColor: Colors.red[50],
           child: Icon(Icons.local_hospital, color: Colors.red),
         ),
-        title: Text(name, style: TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(location, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-        onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Viewing $name...'))),
+        title: Text(name, style: TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: Text(location, style: TextStyle(fontSize: 12, color: Colors.grey[600]), maxLines: 2, overflow: TextOverflow.ellipsis),
+        onTap: () => showTopSnackBar(context, message: 'Viewing $name...'),
       ),
     );
   }

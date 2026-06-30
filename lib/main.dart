@@ -1,27 +1,41 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'screens/auth/login_screen.dart';
 import 'screens/donors/donor_search_screen.dart';
 import 'screens/emergency/emergency_request_screen.dart';
 import 'services/firebase_service.dart';
 import 'theme.dart';
 import 'screens/welcome_screen.dart';
+import 'screens/splash_screen.dart';
+import 'widgets/blood_bridge_chatbot.dart';
+import 'dart:async';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  
-  // Initialize Firebase with error handling
-  try {
-    await FirebaseService.init();
-    print('✅ Firebase initialized successfully');
-  } catch (e) {
-    print('⚠️ Firebase initialization failed: $e');
-    print('App will run without Firebase features');
-  }
-  
-  print('🚀 Starting Blood Bridge App...');
-  runApp(const BloodBridgeApp());
+  // Catch all uncaught errors and print stack traces for debugging
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    // Print to console for web host to show
+    print('🔴 FlutterError caught: ${details.exception}');
+    print('📍 Stack: ${details.stack}');
+  };
+
+  await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    try {
+      print('⚙️ Initializing Firebase...');
+      await FirebaseService.init();
+      print('✅ Firebase initialized successfully');
+    } catch (e, st) {
+      print('⚠️ Firebase initialization failed: $e');
+      print('📍 Stack trace: $st');
+      print('App will run without Firebase features');
+    }
+
+    print('🚀 Starting Blood Bridge App...');
+    runApp(const BloodBridgeApp());
+  }, (error, stack) {
+    print('🔴 Uncaught zone error: $error');
+    print('📍 Stack: $stack');
+  });
 }
 
 class BloodBridgeApp extends StatelessWidget {
@@ -30,26 +44,23 @@ class BloodBridgeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     print('📱 Building MaterialApp...');
-    return KeyboardListener(
-      focusNode: FocusNode()..requestFocus(),
-      autofocus: true,
-      onKeyEvent: (KeyEvent event) {
-        if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.keyR) {
-          // Trigger hot reload by calling reassemble
-          print('🔄 Hot reload triggered via "r" key');
-          WidgetsBinding.instance.reassembleApplication();
-        }
+    return MaterialApp(
+      title: 'Blood Bridge',
+      theme: AppTheme.lightTheme(),
+      debugShowCheckedModeBanner: false,
+      home: const SplashScreen(),
+      routes: {
+        '/donor_search': (_) => DonorSearchScreen(),
+        '/emergency': (_) => EmergencyRequestScreen(),
       },
-      child: MaterialApp(
-        title: 'Blood Bridge',
-        theme: AppTheme.lightTheme(),
-        debugShowCheckedModeBanner: false,
-        home: const WelcomeScreen(),
-        routes: {
-          '/donor_search': (_) => DonorSearchScreen(),
-          '/emergency': (_) => EmergencyRequestScreen(),
-        },
-      ),
+      builder: (context, child) {
+        return Stack(
+          children: [
+            child!,
+            const Positioned.fill(child: BloodBridgeChatbot()),
+          ],
+        );
+      },
     );
   }
 }

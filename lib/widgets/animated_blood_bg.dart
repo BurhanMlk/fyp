@@ -95,22 +95,22 @@ class _BloodCell extends StatelessWidget {
         gradient: RadialGradient(
           center: Alignment(-0.2, -0.3),
           radius: 0.9,
-          colors: [
+            colors: [
             // soften the blood cell colors so the animated background isn't near-black
             Color.lerp(Colors.red.shade300, Colors.red.shade700, depth)!,
-            Colors.red.shade400.withValues(alpha: 0.95),
-            Colors.red.shade300.withValues(alpha: 0.85),
+            Colors.red.shade400.withOpacity(0.95),
+            Colors.red.shade300.withOpacity(0.85),
           ],
           stops: [0.0, 0.5, 1.0],
         ),
-        boxShadow: [
+          boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18 * depth),
+            color: Colors.black.withOpacity(0.18 * depth),
             blurRadius: 18 * depth,
             offset: Offset(0, 6 * depth),
           ),
           BoxShadow(
-            color: Colors.white.withValues(alpha: 0.08),
+            color: Colors.white.withOpacity(0.08),
             blurRadius: 2,
             offset: Offset(-2, -2),
           ),
@@ -121,7 +121,7 @@ class _BloodCell extends StatelessWidget {
           width: size * 0.35,
           height: size * 0.2,
           decoration: BoxDecoration(
-            color: Colors.red.shade700.withValues(alpha: 0.12),
+            color: Colors.red.shade700.withOpacity(0.12),
             borderRadius: BorderRadius.circular(20),
           ),
         ),

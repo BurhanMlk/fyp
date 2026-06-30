@@ -5,6 +5,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/firebase_service.dart';
+import '../../widgets/top_snackbar.dart';
+import 'donor_detail_screen.dart';
 
 class DonorSearchScreen extends StatefulWidget {
   const DonorSearchScreen({super.key});
@@ -46,7 +48,7 @@ class _DonorSearchScreenState extends State<DonorSearchScreen> {
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location permission denied')));
+        showTopSnackBar(context, message: 'Location permission denied', backgroundColor: Colors.orange);
         setState(() { _loading = false; });
         return;
       }
@@ -59,7 +61,7 @@ class _DonorSearchScreenState extends State<DonorSearchScreen> {
         await _searchDemo(pos.latitude, pos.longitude);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location/search failed: $e')));
+      showTopSnackBar(context, message: 'Location/search failed: $e', backgroundColor: Colors.red);
     }
     setState(() { _loading = false; });
   }
@@ -162,33 +164,29 @@ class _DonorSearchScreenState extends State<DonorSearchScreen> {
                 ),
                 child: ListTile(
                   leading: avatar(),
-                  title: Text(name),
-                  subtitle: Text('$blood • ${loc.toString()}'),
+                  title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('$blood • ${loc.toString()}', maxLines: 1, overflow: TextOverflow.ellipsis),
                   trailing: Text('${dist.toStringAsFixed(1)} km'),
                   onTap: () {
-                    // show details
-                    showDialog(context: context, builder: (_) => AlertDialog(
-                      backgroundColor: Colors.white.withOpacity(0.85),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(color: Colors.black, width: 2),
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => DonorDetailScreen(
+                          donorData: {
+                            'name': name,
+                            'bloodGroup': blood,
+                            'location': loc.toString(),
+                            'contact': r['contact'] ?? 'hidden',
+                            'email': r['email'] ?? '',
+                            'role': 'donor',
+                            'approved': r['approved'] ?? false,
+                            'verified': r['verified'] ?? false,
+                          },
+                          isApproved: r['approved'] == true,
+                          canViewContact: r['approved'] == true,
+                        ),
                       ),
-                      title: Text(name),
-                      content: Text('Blood: $blood\nLocation: $loc\nDistance: ${dist.toStringAsFixed(1)} km\nContact: ${r['contact'] ?? 'hidden'}'),
-                      actions: [
-                        OutlinedButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: Colors.black,
-                            side: BorderSide(color: Colors.black, width: 2),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                          ),
-                          child: Text('OK'),
-                        )
-                      ]
-                    ));
+                    );
                   },
                 ),
               );

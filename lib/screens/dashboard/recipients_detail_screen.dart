@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../../services/firebase_service.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 
 class RecipientsDetailScreen extends StatefulWidget {
   const RecipientsDetailScreen({super.key});
@@ -407,159 +408,108 @@ class _RecipientsDetailScreenState extends State<RecipientsDetailScreen> {
   }
 
   void _showRecipientDetails(Map<String, dynamic> recipient) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        final name = recipient['name'] ?? 'Unknown';
-        final email = recipient['email'] ?? '';
-        final bloodGroup = recipient['bloodGroup'] ?? 'N/A';
-        final contact = recipient['contact'] ?? 'N/A';
-        final location = recipient['location'] ?? 'N/A';
-        final urgency = recipient['urgency'] ?? 'Normal';
-        final reason = recipient['reason'] ?? 'Medical Emergency';
-        final age = recipient['age'] ?? 'N/A';
-        final gender = recipient['gender'] ?? 'N/A';
-        final hospital = recipient['hospital'] ?? 'N/A';
-        final unitsNeeded = recipient['unitsNeeded'] ?? 1;
+    final name = recipient['name'] ?? 'Unknown';
+    final email = recipient['email'] ?? '';
+    final bloodGroup = recipient['bloodGroup'] ?? 'N/A';
+    final contact = recipient['contact'] ?? 'N/A';
+    final location = recipient['location'] ?? 'N/A';
+    final urgency = recipient['urgency'] ?? 'Normal';
+    final reason = recipient['reason'] ?? 'Medical Emergency';
+    final age = recipient['age'] ?? 'N/A';
+    final gender = recipient['gender'] ?? 'N/A';
+    final hospital = recipient['hospital'] ?? 'N/A';
+    final unitsNeeded = recipient['unitsNeeded'] ?? 1;
 
-        Color urgencyColor;
-        switch (urgency.toString().toLowerCase()) {
-          case 'critical':
-            urgencyColor = Colors.red;
-            break;
-          case 'urgent':
-            urgencyColor = Colors.orange;
-            break;
-          default:
-            urgencyColor = Colors.green;
-        }
+    Color urgencyColor;
+    switch (urgency.toString().toLowerCase()) {
+      case 'critical': urgencyColor = Colors.red; break;
+      case 'urgent': urgencyColor = Colors.orange; break;
+      default: urgencyColor = Colors.green;
+    }
 
-        return Container(
-          padding: EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            title: const Text('Recipient Details', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            flexibleSpace: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFF1976D2), Color(0xFF42A5F5)], begin: Alignment.topLeft, end: Alignment.bottomRight),
               ),
-              SizedBox(height: 20),
-              
-              // Header
-              Row(
-                children: [
-                  Container(
-                    width: 70,
-                    height: 70,
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.local_hospital, color: Colors.blue, size: 32),
-                        Text(
-                          bloodGroup,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: urgencyColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            urgency.toString().toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: urgencyColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 24),
-
-              // Details
-              _buildDetailRow(Icons.medical_information, 'Reason', reason),
-              _buildDetailRow(Icons.water_drop, 'Units Needed', '$unitsNeeded units'),
-              _buildDetailRow(Icons.local_hospital, 'Hospital', hospital),
-              _buildDetailRow(Icons.phone, 'Contact', contact),
-              _buildDetailRow(Icons.email, 'Email', email),
-              _buildDetailRow(Icons.location_on, 'Location', location),
-              _buildDetailRow(Icons.person, 'Age', age.toString()),
-              _buildDetailRow(Icons.wc, 'Gender', gender.toString()),
-
-              SizedBox(height: 24),
-
-              // Action Button
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('You offered help to $name'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    foregroundColor: Colors.black,
-                    side: BorderSide(color: Colors.black, width: 2),
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  child: Text(
-                    'Offer Help',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ],
+            ),
+            iconTheme: const IconThemeData(color: Colors.white),
+            elevation: 0,
           ),
-        );
-      },
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      width: 70, height: 70,
+                      decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(16)),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.local_hospital, color: Colors.blue, size: 32),
+                          Text(bloodGroup, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(color: urgencyColor.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                            child: Text(urgency.toString().toUpperCase(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: urgencyColor)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                _buildDetailRow(Icons.medical_information, 'Reason', reason),
+                _buildDetailRow(Icons.water_drop, 'Units Needed', '$unitsNeeded units'),
+                _buildDetailRow(Icons.local_hospital, 'Hospital', hospital),
+                _buildDetailRow(Icons.phone, 'Contact', contact),
+                _buildDetailRow(Icons.email, 'Email', email),
+                _buildDetailRow(Icons.location_on, 'Location', location),
+                _buildDetailRow(Icons.person, 'Age', age.toString()),
+                _buildDetailRow(Icons.wc, 'Gender', gender.toString()),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      showTopSnackBar(context, message: 'You offered help to $name', backgroundColor: Colors.green);
+                    },
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.black,
+                      side: const BorderSide(color: Colors.black, width: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Offer Help', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

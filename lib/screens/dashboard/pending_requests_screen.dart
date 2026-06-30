@@ -5,349 +5,196 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../../services/firebase_service.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 
 class PendingRequestsScreen extends StatefulWidget {
   const PendingRequestsScreen({super.key});
-
   @override
   _PendingRequestsScreenState createState() => _PendingRequestsScreenState();
 }
 
 class _PendingRequestsScreenState extends State<PendingRequestsScreen> {
-  List<Map<String, dynamic>> _pendingRequests = [];
+  List<Map<String, dynamic>> _requests = [];
   bool _isLoading = true;
+  String _filterStatus = 'pending';
+  String? _currentEmail;
+  String? _currentRole;
+  bool _hasNewUpdates = false;
 
   @override
   void initState() {
     super.initState();
-    _loadPendingRequests();
+    _loadCurrentUser();
+    _loadData();
   }
 
-  Future<void> _loadPendingRequests() async {
-    setState(() => _isLoading = true);
+  Future<void> _refresh() async {
+    await _loadCurrentUser();
+    await _loadData();
+  }
 
+  Future<void> _loadCurrentUser() async {
     if (FirebaseService.initialized) {
-      await _loadFirebaseRequests();
+      final u = FirebaseAuth.instance.currentUser;
+      _currentEmail = u?.email;
+      if (u != null) {
+        try {
+          final snap = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
+          if (snap.exists) _currentRole = snap.data()?['role']?.toString();
+        } catch (_) {}
+      }
     } else {
-      await _loadDemoRequests();
+      final prefs = await SharedPreferences.getInstance();
+      _currentEmail = prefs.getString('demo_current_email');
+      final users = prefs.getStringList('demo_users') ?? <String>[];
+      try {
+        final me = users.map((s) => jsonDecode(s) as Map<String, dynamic>).firstWhere((u) => (u['email'] ?? '') == (_currentEmail ?? ''), orElse: () => <String, dynamic>{});
+        _currentRole = me['role']?.toString();
+      } catch (_) { _currentRole = null; }
     }
+    setState(() {});
+  }
 
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    if (FirebaseService.initialized) {
+      try {
+        final snap = await FirebaseFirestore.instance.collection('donor_requests').get();
+        _requests = snap.docs.map((d) { final m = d.data(); m['id'] = d.id; return m; }).where((r) => r['recipientEmail'] == _currentEmail || r['requesterEmail'] == _currentEmail || r['donorEmail'] == _currentEmail).toList();
+      } catch (_) { _requests = []; }
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getStringList('donor_requests') ?? [];
+      _requests = raw.map((s) { try { return jsonDecode(s) as Map<String, dynamic>; } catch (_) { return <String, dynamic>{}; } }).where((r) => r.isNotEmpty && (r['recipientEmail'] == _currentEmail || r['requesterEmail'] == _currentEmail || r['donorEmail'] == _currentEmail)).toList();
+    }
+    _checkNewUpdates();
     setState(() => _isLoading = false);
   }
 
-  Future<void> _loadFirebaseRequests() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('donor_requests')
-          .where('status', isEqualTo: 'pending')
-          .orderBy('createdAt', descending: true)
-          .get();
-
-      _pendingRequests = snapshot.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        return data;
-      }).toList();
-    } catch (e) {
-      print('Error loading Firebase requests: $e');
+  Future<void> _checkNewUpdates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastSeen = prefs.getString('last_seen_requests_$_currentEmail') ?? '';
+    bool hasNew = false;
+    for (final r in _requests) {
+      final status = r['status'] ?? 'pending';
+      final updatedAt = r['updatedAt'] ?? r['requestedAt'] ?? '';
+      if (status != 'pending' && updatedAt.toString().compareTo(lastSeen) > 0) {
+        hasNew = true;
+        break;
+      }
     }
+    _hasNewUpdates = hasNew;
+    // ALWAYS mark as seen when user visits this screen
+    await prefs.setString('last_seen_requests_$_currentEmail', DateTime.now().toIso8601String());
   }
 
-  Future<void> _loadDemoRequests() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final requests = prefs.getStringList('donor_requests') ?? <String>[];
-
-      _pendingRequests = requests.map((reqStr) {
-        try {
-          final req = jsonDecode(reqStr) as Map<String, dynamic>;
-          return req;
-        } catch (_) {
-          return <String, dynamic>{};
-        }
-      }).where((req) => 
-        req.isNotEmpty && req['status'] == 'pending'
-      ).toList();
-
-      // Sort by createdAt
-      _pendingRequests.sort((a, b) {
-        final aDate = DateTime.tryParse(a['createdAt'] ?? '') ?? DateTime.now();
-        final bDate = DateTime.tryParse(b['createdAt'] ?? '') ?? DateTime.now();
-        return bDate.compareTo(aDate);
-      });
-    } catch (e) {
-      print('Error loading demo requests: $e');
+  Future<void> _updateStatus(String id, String s) async {
+    // Only admin/super_admin can approve/reject
+    final role = _currentRole ?? '';
+    if (role != 'admin' && role != 'super_admin') {
+      showTopSnackBar(context, message: 'Only admin can approve or reject requests');
+      return;
     }
-  }
-
-  Future<void> _updateRequestStatus(String requestId, String status) async {
     if (FirebaseService.initialized) {
-      await FirebaseFirestore.instance
-          .collection('donor_requests')
-          .doc(requestId)
-          .update({'status': status});
+      await FirebaseFirestore.instance.collection('donor_requests').doc(id).update({
+        'status': s,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
     } else {
       final prefs = await SharedPreferences.getInstance();
-      final requests = prefs.getStringList('donor_requests') ?? <String>[];
-      final updatedRequests = requests.map((reqStr) {
-        try {
-          final req = jsonDecode(reqStr) as Map<String, dynamic>;
-          if (req['id'] == requestId) {
-            req['status'] = status;
-          }
-          return jsonEncode(req);
-        } catch (_) {
-          return reqStr;
-        }
+      final raw = prefs.getStringList('donor_requests') ?? [];
+      final updated = raw.map((r) {
+        try { final m = jsonDecode(r); if (m['id'] == id) { m['status'] = s; m['updatedAt'] = DateTime.now().toIso8601String(); } return jsonEncode(m); } catch (_) { return r; }
       }).toList();
-      await prefs.setStringList('donor_requests', updatedRequests);
+      await prefs.setStringList('donor_requests', updated);
     }
+    _loadData();
+  }
 
-    _loadPendingRequests();
+  bool get _isAdmin => _currentRole == 'admin' || _currentRole == 'super_admin';
+
+  List<Map<String, dynamic>> get _filtered {
+    final list = _requests.where((r) {
+      final s = r['status'] ?? 'pending';
+      if (_filterStatus == 'all') return true;
+      if (_filterStatus == 'approved') return s == 'approved' || s == 'accepted';
+      return s == _filterStatus;
+    }).toList();
+    list.sort((a, b) => (b['requestedAt'] ?? b['createdAt'] ?? '').compareTo(a['requestedAt'] ?? a['createdAt'] ?? ''));
+    return list;
   }
 
   @override
   Widget build(BuildContext context) {
+    final list = _filtered;
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text('Pending Requests'),
-        actions: [
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Center(
-              child: Text(
-                '${_pendingRequests.length} Pending',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
-        ],
+        title: const Text('My Requests', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        flexibleSpace: Container(decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFFD32F2F), Color(0xFFE57373)], begin: Alignment.topLeft, end: Alignment.bottomRight))),
+        iconTheme: const IconThemeData(color: Colors.white), elevation: 0,
       ),
-      body: _isLoading
-          ? Center(child: BloodBridgeLoader())
-          : _pendingRequests.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
-                      SizedBox(height: 16),
-                      Text(
-                        'No pending requests',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'All requests have been processed',
-                        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadPendingRequests,
-                  child: ListView.builder(
-                    padding: EdgeInsets.all(16),
-                    itemCount: _pendingRequests.length,
-                    itemBuilder: (context, index) {
-                      final request = _pendingRequests[index];
-                      return _buildRequestCard(request);
-                    },
-                  ),
-                ),
+      body: _isLoading ? const Center(child: BloodBridgeLoader()) : Column(children: [
+        Container(padding: const EdgeInsets.all(12), child: Row(children: [
+          _tab('Pending', 'pending'), const SizedBox(width: 6),
+          _tab('Approved', 'approved'), const SizedBox(width: 6),
+          _tab('Rejected', 'rejected'), const SizedBox(width: 6),
+          _tab('All', 'all'),
+        ])),
+        Expanded(child: list.isEmpty ? Center(child: Text('No $_filterStatus requests', style: TextStyle(color: Colors.grey.shade500))) : RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView.separated(padding: const EdgeInsets.symmetric(horizontal: 12), itemCount: list.length, separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (_, i) => _buildItem(list[i])),
+        )),
+      ]),
     );
   }
 
-  Widget _buildRequestCard(Map<String, dynamic> request) {
-    final recipientName = request['recipientName'] ?? 'Unknown';
-    final donorName = request['donorName'] ?? 'Unknown';
-    final bloodGroup = request['bloodGroup'] ?? 'N/A';
-    final message = request['message'] ?? 'No message';
-    final createdAt = DateTime.tryParse(request['createdAt'] ?? '') ?? DateTime.now();
-    final requestId = request['id'] ?? '';
+  Widget _tab(String label, String status) {
+    final count = _requests.where((r) {
+      final s = r['status'] ?? 'pending';
+      if (status == 'all') return true;
+      if (status == 'approved') return s == 'approved' || s == 'accepted';
+      return s == status;
+    }).length;
+    final active = _filterStatus == status;
+    return Expanded(child: InkWell(
+      onTap: () => setState(() => _filterStatus = status),
+      child: Container(padding: const EdgeInsets.symmetric(vertical: 8), decoration: BoxDecoration(
+        color: active ? const Color(0xFFD32F2F) : Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+        child: Text('$label ($count)', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: active ? Colors.white : Colors.grey.shade700)),
+      ),
+    ));
+  }
+
+  Widget _buildItem(Map<String, dynamic> r) {
+    final status = (r['status'] ?? 'pending').toString();
+    final isPending = status == 'pending';
+    final isApproved = status == 'approved' || status == 'accepted';
+    final donor = r['donorName'] ?? r['donorEmail'] ?? 'Unknown';
+    final bg = r['bloodGroup'] ?? 'N/A';
+    final msg = r['message'] ?? '';
+    final id = r['id'] ?? '';
+    final cooldownUntil = r['cooldownUntil']?.toString();
 
     return Card(
-      margin: EdgeInsets.only(bottom: 16),
-      elevation: 3,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.pending_actions, color: Colors.orange, size: 24),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Blood Request',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        _formatDate(createdAt),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red, width: 1),
-                  ),
-                  child: Text(
-                    bloodGroup,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 16),
-            Divider(),
-            SizedBox(height: 12),
-            _buildInfoRow(Icons.person, 'Recipient', recipientName),
-            SizedBox(height: 8),
-            _buildInfoRow(Icons.bloodtype, 'Donor', donorName),
-            SizedBox(height: 8),
-            _buildInfoRow(Icons.message, 'Message', message),
-            SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      _showConfirmationDialog(
-                        'Accept Request',
-                        'Are you sure you want to accept this blood request?',
-                        () => _updateRequestStatus(requestId, 'accepted'),
-                      );
-                    },
-                    icon: Icon(Icons.check),
-                    label: Text('Accept'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      _showConfirmationDialog(
-                        'Reject Request',
-                        'Are you sure you want to reject this blood request?',
-                        () => _updateRequestStatus(requestId, 'rejected'),
-                      );
-                    },
-                    icon: Icon(Icons.close),
-                    label: Text('Reject'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(IconData icon, String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 16, color: Colors.grey[600]),
-        SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey[700],
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inDays > 0) {
-      return '${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago';
-    } else if (diff.inHours > 0) {
-      return '${diff.inHours} hour${diff.inHours > 1 ? 's' : ''} ago';
-    } else if (diff.inMinutes > 0) {
-      return '${diff.inMinutes} minute${diff.inMinutes > 1 ? 's' : ''} ago';
-    } else {
-      return 'Just now';
-    }
-  }
-
-  void _showConfirmationDialog(String title, String message, VoidCallback onConfirm) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              onConfirm();
-            },
-            child: Text('Confirm'),
-          ),
-        ],
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+        leading: CircleAvatar(radius: 18, backgroundColor: isApproved ? Colors.green.shade100 : isPending ? Colors.orange.shade100 : Colors.red.shade100,
+          child: Icon(isApproved ? Icons.check_circle : isPending ? Icons.pending : Icons.cancel, color: isApproved ? Colors.green : isPending ? Colors.orange : Colors.red, size: 22)),
+        title: Text('$donor • $bg', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (msg.isNotEmpty) Text(msg, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          Text(status.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isApproved ? Colors.green : isPending ? Colors.orange : Colors.red)),
+          if (cooldownUntil != null)
+            Text('⏳ Cooldown until: $cooldownUntil', style: const TextStyle(fontSize: 10, color: Colors.blueGrey)),
+        ]),
+        trailing: isPending && _isAdmin ? Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(icon: const Icon(Icons.check_circle_outline, color: Colors.green, size: 22), onPressed: () => _updateStatus(id, 'approved'), tooltip: 'Approve', padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+          const SizedBox(width: 4),
+          IconButton(icon: const Icon(Icons.cancel_outlined, color: Colors.red, size: 22), onPressed: () => _updateStatus(id, 'rejected'), tooltip: 'Reject', padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+        ]) : null,
       ),
     );
   }

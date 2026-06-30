@@ -5,6 +5,7 @@ import '../../services/firebase_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../widgets/blood_bridge_loader.dart';
+import '../../widgets/top_snackbar.dart';
 
 class EmergencyRequestScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
@@ -62,11 +63,11 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
     final msg = _msgCtl.text.trim();
     final phone = _phoneCtl.text.trim();
     if (msg.isEmpty || phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fill message and contact phone')));
+      showTopSnackBar(context, message: 'Fill message and contact phone');
       return;
     }
     if (_requiredDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Please select required date'), backgroundColor: Colors.red));
+      showTopSnackBar(context, message: 'Please select required date', backgroundColor: Colors.red);
       return;
     }
     setState(() => _sending = true);
@@ -96,9 +97,9 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
           final uri = Uri.parse('sms:$adminPhone?body=$body');
           await launchUrl(uri);
         }
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Emergency request submitted')));
+        showTopSnackBar(context, message: 'Emergency request submitted', backgroundColor: Colors.green);
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Submit failed: ${e.toString()}')));
+        showTopSnackBar(context, message: 'Submit failed: ${e.toString()}', backgroundColor: Colors.red);
       }
     } else {
       final prefs = await SharedPreferences.getInstance();
@@ -118,7 +119,7 @@ class _EmergencyRequestScreenState extends State<EmergencyRequestScreen> {
       final msgs = prefs.getStringList('sent_sms') ?? <String>[];
       msgs.add(jsonEncode(sms));
       await prefs.setStringList('sent_sms', msgs);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Emergency request saved (demo) and superadmin notified (simulated)')));
+      showTopSnackBar(context, message: 'Emergency request saved (demo) and superadmin notified (simulated)', backgroundColor: Colors.green);
     }
 
     setState(() => _sending = false);

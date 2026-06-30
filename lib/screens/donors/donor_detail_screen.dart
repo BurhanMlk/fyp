@@ -2,12 +2,17 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/firebase_service.dart';
+import '../../widgets/top_snackbar.dart';
 
-class DonorDetailScreen extends StatelessWidget {
+class DonorDetailScreen extends StatefulWidget {
   final Map<String, dynamic> donorData;
   final String? docId;
   final bool isApproved;
   final bool canViewContact;
+  final bool isAdmin;
 
   const DonorDetailScreen({
     super.key,
@@ -15,7 +20,15 @@ class DonorDetailScreen extends StatelessWidget {
     this.docId,
     required this.isApproved,
     required this.canViewContact,
+    this.isAdmin = false,
   });
+
+  @override
+  _DonorDetailScreenState createState() => _DonorDetailScreenState();
+}
+
+class _DonorDetailScreenState extends State<DonorDetailScreen> {
+  bool _cancelling = false;
 
   ImageProvider? _imageFromBase64(String? base64Str) {
     if (base64Str == null || base64Str.isEmpty) return null;
@@ -27,22 +40,109 @@ class DonorDetailScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _cancelDonation() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel Donation?'),
+        content: const Text('This will remove the donation record, clear the 3-month cooldown, and reset points. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('No')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Yes, Cancel', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+    setState(() => _cancelling = true);
+
+    try {
+      final donorEmail = widget.donorData['email'] ?? '';
+      final docId = widget.docId;
+
+      if (FirebaseService.initialized && docId != null) {
+        // Clear cooldown from Firestore
+        await FirebaseFirestore.instance.collection('users').doc(docId).update({
+          'cooldownUntil': FieldValue.delete(),
+          'lastDonation': FieldValue.delete(),
+        });
+
+        // Decrement donation count if possible
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(docId).update({
+            'donationCount': FieldValue.increment(-1),
+          });
+        } catch (_) {}
+      } else {
+        // Demo mode
+        final prefs = await SharedPreferences.getInstance();
+        final users = prefs.getStringList('demo_users') ?? <String>[];
+        final updated = users.map((s) {
+          try {
+            final u = jsonDecode(s) as Map<String, dynamic>;
+            if ((u['email'] ?? '') == donorEmail) {
+              u.remove('cooldownUntil');
+              u.remove('lastDonation');
+              u['donationCount'] = ((u['donationCount'] ?? 1) - 1).clamp(0, 999);
+            }
+            return jsonEncode(u);
+          } catch (_) { return s; }
+        }).toList();
+        await prefs.setStringList('demo_users', updated);
+      }
+
+      if (mounted) {
+        // Update local donor data too
+        widget.donorData.remove('cooldownUntil');
+        widget.donorData.remove('lastDonation');
+        setState(() => _cancelling = false);
+        showTopSnackBar(context, message: 'Donation cancelled! Cooldown cleared.', backgroundColor: Colors.green);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _cancelling = false);
+        showTopSnackBar(context, message: 'Error: $e', backgroundColor: Colors.red);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final name = donorData['name'] ?? 'No name';
-    final bloodGroup = donorData['bloodGroup'] ?? 'Unknown';
-    final location = donorData['location'] ?? 'Unknown location';
-    final contact = donorData['contact'] ?? 'Not available';
-    final email = donorData['email'] ?? 'Not available';
-    final role = (donorData['role'] ?? 'donor').toString();
-    final designation = donorData['designation'] ?? '';
-    
+    final name = widget.donorData['name'] ?? 'No name';
+    final bloodGroup = widget.donorData['bloodGroup'] ?? 'Unknown';
+    final location = widget.donorData['location'] ?? 'Unknown location';
+    final contact = widget.donorData['contact'] ?? 'Not available';
+    final email = widget.donorData['email'] ?? 'Not available';
+    final role = (widget.donorData['role'] ?? 'donor').toString();
+    final designation = widget.donorData['designation'] ?? '';
+    final lastDonation = widget.donorData['lastDonation']?.toString();
+    final cooldownUntil = widget.donorData['cooldownUntil']?.toString();
+    final donationCount = widget.donorData['donationCount'] ?? 0;
+    final hasActiveCooldown = cooldownUntil != null && cooldownUntil.isNotEmpty;
+
+    // Calculate cooldown remaining
+    String? cooldownRemaining;
+    if (hasActiveCooldown) {
+      try {
+        final cooldownDate = DateTime.parse(cooldownUntil);
+        final now = DateTime.now();
+        if (cooldownDate.isAfter(now)) {
+          final daysLeft = cooldownDate.difference(now).inDays;
+          cooldownRemaining = '$daysLeft days remaining';
+        }
+      } catch (_) {}
+    }
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(
-          name,
-          style: const TextStyle(
+        title: const Text(
+          'Donor Details',
+          style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
           ),
@@ -75,17 +175,29 @@ class DonorDetailScreen extends StatelessWidget {
               child: Column(
                 children: [
                   const SizedBox(height: 24),
-                  // Avatar
                   _buildAvatar(),
                   const SizedBox(height: 16),
-                  // Name
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
+                  // Name with verified badge
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      if (widget.donorData['verified'] == true)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 6),
+                          child: Icon(Icons.verified, color: Colors.blue, size: 26),
+                        ),
+                    ],
                   ),
                   if (designation.isNotEmpty) ...[
                     const SizedBox(height: 4),
@@ -98,7 +210,6 @@ class DonorDetailScreen extends StatelessWidget {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  // Role Badge
                   if (role == 'donor')
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -126,8 +237,93 @@ class DonorDetailScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 children: [
-                  // Approval Warning at Top
-                  if (!isApproved) ...[
+                  // Cooldown / Donation Status Card (NEW)
+                  if (hasActiveCooldown && widget.isAdmin) ...[
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange.shade300),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.timer, color: Colors.orange.shade700),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Donation Cooldown Active',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          if (lastDonation != null)
+                            Text('🩸 Donated: $lastDonation', style: const TextStyle(fontSize: 13)),
+                          if (cooldownRemaining != null)
+                            Text('⏳ $cooldownRemaining', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                          Text('🔢 Total Donations: $donationCount', style: const TextStyle(fontSize: 13)),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: _cancelling ? null : _cancelDonation,
+                              icon: _cancelling
+                                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Icon(Icons.cancel_outlined, color: Colors.red),
+                              label: Text(_cancelling ? 'Cancelling...' : 'Cancel Donation', style: const TextStyle(color: Colors.red)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.red, width: 2),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Donation History Card (NEW)
+                  if (donationCount > 0 && !hasActiveCooldown && widget.isAdmin) ...[
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.green.shade300),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.check_circle, color: Colors.green.shade700),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Last Donation',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          if (lastDonation != null)
+                            Text('🩸 Donated: $lastDonation', style: const TextStyle(fontSize: 13)),
+                          Text('🔢 Total Donations: $donationCount', style: const TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Approval Warning
+                  if (!widget.isApproved) ...[
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -141,7 +337,7 @@ class DonorDetailScreen extends StatelessWidget {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'This donor is pending approval. Contact information will be available once approved.',
+                              'This donor is pending approval.',
                               style: TextStyle(
                                 color: Colors.orange.shade900,
                                 fontSize: 14,
@@ -173,7 +369,7 @@ class DonorDetailScreen extends StatelessWidget {
                   const SizedBox(height: 12),
 
                   // Contact Card
-                  if (canViewContact && isApproved)
+                  if (widget.canViewContact && widget.isApproved)
                     _buildContactCard(
                       icon: Icons.phone,
                       title: 'Contact',
@@ -185,13 +381,13 @@ class DonorDetailScreen extends StatelessWidget {
                     _buildInfoCard(
                       icon: Icons.phone_locked,
                       title: 'Contact',
-                      value: isApproved ? 'View details to see contact' : 'Not approved yet',
+                      value: widget.isApproved ? 'View details to see contact' : 'Not approved yet',
                       color: Colors.grey,
                     ),
                   const SizedBox(height: 12),
 
                   // Email Card
-                  if (canViewContact && isApproved)
+                  if (widget.canViewContact && widget.isApproved)
                     _buildContactCard(
                       icon: Icons.email,
                       title: 'Email',
@@ -203,14 +399,14 @@ class DonorDetailScreen extends StatelessWidget {
                     _buildInfoCard(
                       icon: Icons.email_outlined,
                       title: 'Email',
-                      value: isApproved ? 'View details to see email' : 'Not approved yet',
+                      value: widget.isApproved ? 'View details to see email' : 'Not approved yet',
                       color: Colors.grey,
                     ),
 
                   const SizedBox(height: 24),
 
                   // Action Buttons
-                  if (canViewContact && isApproved) ...[
+                  if (widget.canViewContact && widget.isApproved) ...[
                     Row(
                       children: [
                         Expanded(
@@ -277,8 +473,8 @@ class DonorDetailScreen extends StatelessWidget {
   }
 
   Widget _buildAvatar() {
-    final img = _imageFromBase64(donorData['photoData'] as String?);
-    final name = (donorData['name'] ?? '').toString();
+    final img = _imageFromBase64(widget.donorData['photoData'] as String?);
+    final name = (widget.donorData['name'] ?? '').toString();
 
     if (img != null) {
       return Container(
@@ -461,16 +657,12 @@ class DonorDetailScreen extends StatelessWidget {
     try {
       if (!await launchUrl(uri)) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open phone app')),
-          );
+          showTopSnackBar(context, message: 'Could not open phone app', backgroundColor: Colors.red);
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        showTopSnackBar(context, message: 'Error: $e', backgroundColor: Colors.red);
       }
     }
   }
@@ -481,16 +673,12 @@ class DonorDetailScreen extends StatelessWidget {
     try {
       if (!await launchUrl(uri)) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open SMS app')),
-          );
+          showTopSnackBar(context, message: 'Could not open SMS app', backgroundColor: Colors.red);
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        showTopSnackBar(context, message: 'Error: $e', backgroundColor: Colors.red);
       }
     }
   }
@@ -500,16 +688,12 @@ class DonorDetailScreen extends StatelessWidget {
     try {
       if (!await launchUrl(uri)) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open email app')),
-          );
+          showTopSnackBar(context, message: 'Could not open email app', backgroundColor: Colors.red);
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        showTopSnackBar(context, message: 'Error: $e', backgroundColor: Colors.red);
       }
     }
   }

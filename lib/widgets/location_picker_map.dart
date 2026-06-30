@@ -3,6 +3,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'blood_bridge_loader.dart';
+import 'top_snackbar.dart';
 
 class LocationPickerMap extends StatefulWidget {
   const LocationPickerMap({super.key});
@@ -16,6 +17,7 @@ class _LocationPickerMapState extends State<LocationPickerMap> {
   LatLng _selectedLocation = LatLng(24.8607, 67.0011); // Default Karachi
   String _selectedAddress = 'Tap on map to select location';
   bool _isLoading = false;
+  TextEditingController searchController = TextEditingController();
   
   // Popular cities and areas in Pakistan
   final Map<String, LatLng> _popularLocations = {
@@ -249,9 +251,7 @@ class _LocationPickerMapState extends State<LocationPickerMap> {
               if (_selectedAddress.isNotEmpty && _selectedAddress != 'Tap on map or search to select location') {
                 Navigator.of(context).pop(_selectedAddress);
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Please select a location first')),
-                );
+                showTopSnackBar(context, message: 'Please select a location first', backgroundColor: Colors.orange);
               }
             },
             tooltip: 'Confirm',
@@ -353,6 +353,7 @@ class _LocationPickerMapState extends State<LocationPickerMap> {
   @override
   void dispose() {
     _mapController?.dispose();
+    searchController.dispose();
     super.dispose();
   }
 }
