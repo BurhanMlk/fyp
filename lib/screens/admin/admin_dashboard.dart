@@ -4,6 +4,7 @@ import 'dart:io' as io;
 import 'dart:ui' as ui;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/firebase_service.dart';
+import '../../core/service_locator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../widgets/blood_bridge_loader.dart';
@@ -117,17 +118,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   // Guard: if not super_admin, redirect back (demo & Firebase)
   Future<bool> _isSuperAdmin() async {
-    if (FirebaseService.initialized) {
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user == null) return false;
-        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-        final role = doc.data()?['role'] ?? '';
-        return role == 'super_admin';
-      } catch (_) {
-        return false;
+    try {
+      final user = await sl.auth.getCurrentUser();
+      if (user == null) return false;
+      return user.role == 'super_admin';
+    } catch (_) {
+      if (FirebaseService.initialized) {
+        try {
+          final fbUser = FirebaseAuth.instance.currentUser;
+          if (fbUser == null) return false;
+          final doc = await FirebaseFirestore.instance.collection('users').doc(fbUser.uid).get();
+          return (doc.data()?['role'] ?? '') == 'super_admin';
+        } catch (_) {}
       }
-    } else {
       final prefs = await SharedPreferences.getInstance();
       final email = prefs.getString('demo_current_email');
       if (email == null) return false;
@@ -162,71 +165,66 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<void> _loadStats() async {
-    if (FirebaseService.initialized) {
-      try {
-        final snap = await FirebaseFirestore.instance.collection('users').get();
-        final docs = snap.docs;
-        int donors = 0, recipients = 0, bloodBanks = 0;
-        for (final d in docs) {
-          final r = d.data()['role'] ?? '';
-          print('📊 User role found: "$r"');
-          if (r == 'donor') {
-            donors++;
-          } else if (r == 'recipient') {
-            recipients++;
-          } else if (r != 'admin' && r != 'super_admin') {
-            // Any role other than donor, recipient, admin, or super_admin is considered blood bank
-            bloodBanks++;
-            print('🏥 Blood bank user found with role: "$r"');
-          }
+    try {
+      // Use Supabase repository layer (works with both Firebase and PostgreSQL)
+      final allUsers = await sl.user.getAllUsers();
+      
+      int donors = 0, recipients = 0, bloodBanks = 0;
+      for (final u in allUsers) {
+        final r = u.role;
+        if (r == 'donor') {
+          donors++;
+        } else if (r == 'recipient') {
+          recipients++;
+        } else if (r != 'admin' && r != 'super_admin') {
+          bloodBanks++;
         }
-        print('📈 Final counts - Donors: $donors, Recipients: $recipients, Blood Banks: $bloodBanks');
-        setState(() {
-          _totalUsers = docs.length;
-          _donors = donors;
-          _recipients = recipients;
-          _bloodBanksCount = bloodBanks;
-          print('🔄 Stats updated - Blood Banks: $_bloodBanksCount');
-        });
-      } catch (e) {
-        setState(() {
-          _totalUsers = 0;
-          _bloodBanksCount = 0;
-        });
       }
-    } else {
-      final prefs = await SharedPreferences.getInstance();
-      final list = prefs.getStringList('demo_users') ?? <String>[];
-      try {
+      
+      setState(() {
+        _totalUsers = allUsers.length;
+        _donors = donors;
+        _recipients = recipients;
+        _bloodBanksCount = bloodBanks;
+      });
+    } catch (e) {
+      // Fallback to Firebase directly if Supabase isn't available
+      if (FirebaseService.initialized) {
+        try {
+          final snap = await FirebaseFirestore.instance.collection('users').get();
+          int donors = 0, recipients = 0, bloodBanks = 0;
+          for (final d in snap.docs) {
+            final r = d.data()['role'] ?? '';
+            if (r == 'donor') donors++;
+            else if (r == 'recipient') recipients++;
+            else if (r != 'admin' && r != 'super_admin') bloodBanks++;
+          }
+          setState(() {
+            _totalUsers = snap.docs.length;
+            _donors = donors;
+            _recipients = recipients;
+            _bloodBanksCount = bloodBanks;
+          });
+        } catch (_) {
+          setState(() { _totalUsers = 0; _bloodBanksCount = 0; });
+        }
+      } else {
+        // Demo fallback
+        final prefs = await SharedPreferences.getInstance();
+        final list = prefs.getStringList('demo_users') ?? <String>[];
         int donors = 0, recipients = 0, bloodBanks = 0;
         for (final s in list) {
           final Map<String, dynamic> u = jsonDecode(s);
           final role = u['role'] ?? '';
-          print('📊 Demo user role found: "$role"');
-          if (role == 'donor') {
-            donors++;
-          } else if (role == 'recipient') {
-            recipients++;
-          } else if (role != 'admin' && role != 'super_admin') {
-            // Any role other than donor, recipient, admin, or super_admin is considered blood bank
-            bloodBanks++;
-            print('🏥 Demo blood bank user found with role: "$role"');
-          }
+          if (role == 'donor') donors++;
+          else if (role == 'recipient') recipients++;
+          else if (role != 'admin' && role != 'super_admin') bloodBanks++;
         }
-        print('📈 Demo final counts - Donors: $donors, Recipients: $recipients, Blood Banks: $bloodBanks');
         setState(() {
           _totalUsers = list.length;
           _donors = donors;
           _recipients = recipients;
           _bloodBanksCount = bloodBanks;
-          print('🔄 Demo stats updated - Blood Banks: $_bloodBanksCount');
-        });
-      } catch (e) {
-        setState(() {
-          _totalUsers = 0;
-          _donors = 0;
-          _recipients = 0;
-          _bloodBanksCount = 0;
         });
       }
     }

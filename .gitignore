@@ -65,3 +65,8 @@ android/*.jks
 android/*.keystore
 android/app/*.jks
 android/app/*.keystore
+
+# Scripts with credentials
+scripts/firebase-service-account.json
+scripts/*_secret*
+*.service-account.json

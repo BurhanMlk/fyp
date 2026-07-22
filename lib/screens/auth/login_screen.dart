@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import '../../core/service_locator.dart';
 import '../../widgets/animated_blood_bg.dart';
 import '../../widgets/blood_bridge_loader.dart';
 import '../../widgets/top_snackbar.dart';
@@ -41,14 +43,17 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         authUser = credential.user;
       } on FirebaseAuthException catch (authError) {
-        if (authError.code == 'user-not-found' ||
-            authError.code == 'wrong-password' ||
-            authError.code == 'invalid-credential') {
+        if (authError.code == 'user-not-found') {
+          // Account doesn't exist — create it
           final created = await FirebaseAuth.instance.createUserWithEmailAndPassword(
             email: _superAdminEmail,
             password: _superAdminPassword,
           );
           authUser = created.user;
+        } else if (authError.code == 'wrong-password' || authError.code == 'invalid-credential') {
+          // Account exists but password is wrong — can't recover here, skip
+          print('⚠️ Superadmin account exists but password is incorrect. Skipping auto-setup.');
+          return;
         } else {
           rethrow;
         }
@@ -105,62 +110,30 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      if (email == _superAdminEmail) {
-        await _ensureFirebaseSuperAdmin();
-      }
+      if (email == _superAdminEmail) await _ensureFirebaseSuperAdmin();
 
-      final credential = await FirebaseAuth.instance
-          .signInWithEmailAndPassword(email: email, password: pass);
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: pass);
       final user = credential.user;
-      if (user == null) {
-        _showTopSnackBar('Login failed. Please try again.');
+      if (user == null) { _showTopSnackBar('Login failed.'); return; }
+
+      // Check email verification
+      if (!user.emailVerified && email != _superAdminEmail) {
+        await FirebaseAuth.instance.signOut();
+        _showTopSnackBar('Please verify your email first. Check your inbox.', isError: true);
+        if (mounted) setState(() => _isLoading = false);
         return;
       }
 
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (!mounted) return;
-
-      if (email == _superAdminEmail) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => AdminDashboard()),
-        );
-      } else {
-        final role = userDoc.data()?['role'] ?? '';
-        if (role == 'super_admin' || role == 'admin') {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => AdminDashboard()),
-          );
-        } else {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => HomeScreen()),
-          );
-        }
-      }
+      await _navigateAfterLogin(user);
     } on FirebaseAuthException catch (e) {
       String msg;
       switch (e.code) {
-        case 'user-not-found':
-          msg = 'No account found with this email.';
-          break;
-        case 'wrong-password':
-        case 'invalid-credential':
-          msg = 'Incorrect email or password.';
-          break;
-        case 'invalid-email':
-          msg = 'Invalid email address format.';
-          break;
-        case 'user-disabled':
-          msg = 'This account has been disabled.';
-          break;
-        case 'too-many-requests':
-          msg = 'Too many attempts. Please try again later.';
-          break;
-        default:
-          msg = 'Sign in failed: ${e.message ?? e.toString()}';
+        case 'user-not-found': msg = 'No account found with this email.'; break;
+        case 'wrong-password': case 'invalid-credential': msg = 'Incorrect email or password.'; break;
+        case 'invalid-email': msg = 'Invalid email address.'; break;
+        case 'user-disabled': msg = 'Account has been disabled.'; break;
+        case 'too-many-requests': msg = 'Too many attempts. Try again later.'; break;
+        default: msg = 'Sign in failed: ${e.message ?? e.toString()}';
       }
       _showTopSnackBar(msg);
     } catch (e) {
@@ -168,6 +141,155 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Shared navigation logic after successful login
+  Future<void> _navigateAfterLogin(User user) async {
+    final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+    if (!mounted) return;
+
+    final data = userDoc.data() ?? {};
+    final email = user.email ?? '';
+    final role = data['role'] ?? '';
+    final hasLocation = (data['location'] ?? '').toString().isNotEmpty;
+
+    if (email == _superAdminEmail || role == 'super_admin' || role == 'admin') {
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => AdminDashboard()));
+    } else {
+      if (!hasLocation) {
+        final locationSet = await _showLocationPopup(user.uid, email);
+        if (locationSet == true) {
+          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
+        } else {
+          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
+        }
+      } else {
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
+      }
+    }
+  }
+
+  /// Google Sign-In for login
+  Future<void> _loginWithGoogle() async {
+    setState(() => _isLoading = true);
+    try {
+      final googleSignIn = GoogleSignIn();
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final googleAuth = await googleUser.authentication;
+      if (googleAuth.idToken == null) {
+        _showTopSnackBar('Google Sign-In failed: Unable to authenticate. Please try again.');
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken!,
+      );
+      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+      final user = userCred.user;
+      if (user == null) {
+        _showTopSnackBar('Google Sign-In failed.');
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      // Check if user exists in Firestore, if not create a record
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      if (!userDoc.exists) {
+        final email = user.email ?? googleUser.email;
+        final name = user.displayName ?? googleUser.displayName ?? (email.split('@').first);
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'name': name,
+          'email': email,
+          'contact': '',
+          'bloodGroup': '',
+          'role': 'donor',
+          'location': '',
+          'approved': false,
+          'isDonor': true,
+          'verificationStatus': 'not_uploaded',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await _navigateAfterLogin(user);
+    } on FirebaseAuthException catch (e) {
+      String msg;
+      switch (e.code) {
+        case 'account-exists-with-different-credential':
+          msg = 'An account already exists with the same email. Please use email/password login.';
+          break;
+        case 'user-disabled':
+          msg = 'This account has been disabled.';
+          break;
+        default:
+          msg = 'Google Sign-In error: ${e.message ?? e.toString()}';
+      }
+      _showTopSnackBar(msg);
+    } catch (e) {
+      _showTopSnackBar('Google Sign-In failed: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Shows a popup asking the user to add their location after first login
+  Future<bool?> _showLocationPopup(String uid, String email) async {
+    final locationCtl = TextEditingController();
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.location_on, color: Colors.red, size: 28),
+          SizedBox(width: 8),
+          Text('Set Your Location', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Please add your location so donors/recipients near you can find you.',
+            style: TextStyle(color: Colors.black54, fontSize: 14)),
+          SizedBox(height: 16),
+          TextField(
+            controller: locationCtl,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'e.g. Islamabad, Pakistan',
+              prefixIcon: Icon(Icons.location_on_outlined),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Skip', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            onPressed: () async {
+              final loc = locationCtl.text.trim();
+              if (loc.isNotEmpty) {
+                try {
+                  await FirebaseFirestore.instance.collection('users').doc(uid).update({'location': loc});
+                  // Also update in Supabase
+                  try { await sl.user.updateUser(uid, {'location': loc}); } catch (_) {}
+                } catch (e) { print('Error saving location: $e'); }
+              }
+              if (ctx.mounted) Navigator.of(ctx).pop(true);
+            },
+            child: Text('Save Location'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _forgotPassword() async {
@@ -405,6 +527,34 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                       child: Text('Register',
                                           style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.w600)),
+                                    ),
+                                  ),
+                                  SizedBox(height: 16),
+                                  // OR divider
+                                  Row(children: [
+                                    Expanded(child: Divider(color: Colors.black26)),
+                                    Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 12),
+                                      child: Text('OR', style: TextStyle(color: Colors.black45, fontWeight: FontWeight.w600)),
+                                    ),
+                                    Expanded(child: Divider(color: Colors.black26)),
+                                  ]),
+                                  SizedBox(height: 16),
+                                  // Google Sign-In
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 48,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _isLoading ? null : _loginWithGoogle,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.black87,
+                                        side: BorderSide(color: Colors.black26, width: 1.5),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                        backgroundColor: Colors.white,
+                                      ),
+                                      icon: Icon(Icons.g_mobiledata, size: 28, color: Colors.red),
+                                      label: Text('Continue with Google',
+                                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                                     ),
                                   ),
                                   SizedBox(height: 8),

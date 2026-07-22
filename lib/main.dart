@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/donors/donor_search_screen.dart';
 import 'screens/emergency/emergency_request_screen.dart';
 import 'services/firebase_service.dart';
@@ -6,6 +7,7 @@ import 'theme.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/splash_screen.dart';
 import 'widgets/blood_bridge_chatbot.dart';
+import 'core/supabase_config.dart';
 import 'dart:async';
 
 Future<void> main() async {
@@ -20,6 +22,23 @@ Future<void> main() async {
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
+    // ── Initialize Supabase (PostgreSQL backend) ──
+    try {
+      print('🐘 Initializing Supabase (PostgreSQL)...');
+      await Supabase.initialize(
+        url: SupabaseConfig.url,
+        anonKey: SupabaseConfig.anonKey,
+      );
+      print('✅ Supabase initialized successfully');
+      print('   URL: ${SupabaseConfig.url}');
+      print('   Schema: ${SupabaseConfig.schemaName}');
+    } catch (e, st) {
+      print('⚠️ Supabase initialization failed: $e');
+      print('📍 Stack trace: $st');
+      print('💡 Set your Supabase URL/Key in lib/core/supabase_config.dart');
+    }
+
+    // ── Initialize Firebase (kept for Auth fallback during migration) ──
     try {
       print('⚙️ Initializing Firebase...');
       await FirebaseService.init();
