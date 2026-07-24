@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -111,25 +112,36 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _loginWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
-      final googleUser = await googleSignIn.signIn();
-      if (googleUser == null) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
+      final UserCredential userCred;
+      String? googleEmail;
+      String? googleDisplayName;
+
+      if (kIsWeb) {
+        // Web: use Firebase signInWithPopup (google_sign_in is deprecated on web)
+        userCred = await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+      } else {
+        // Mobile: use GoogleSignIn plugin
+        final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+        final googleUser = await googleSignIn.signIn();
+        if (googleUser == null) {
+          if (mounted) setState(() => _isLoading = false);
+          return;
+        }
+        googleEmail = googleUser.email;
+        googleDisplayName = googleUser.displayName;
+        final googleAuth = await googleUser.authentication;
+        if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
+          _showTopSnackBar('Google Sign-In failed: No ID token. Add SHA-1 in Firebase Console → Project Settings.');
+          if (mounted) setState(() => _isLoading = false);
+          return;
+        }
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken!,
+        );
+        userCred = await FirebaseAuth.instance.signInWithCredential(credential);
       }
 
-      final googleAuth = await googleUser.authentication;
-      if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
-        _showTopSnackBar('Google Sign-In failed: No ID token. Add SHA-1 in Firebase Console → Project Settings.');
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken!,
-      );
-      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
       final user = userCred.user;
       if (user == null) {
         _showTopSnackBar('Google Sign-In failed.');
@@ -140,8 +152,8 @@ class _LoginScreenState extends State<LoginScreen> {
       // Check if user exists in Firestore, if not create a record
       final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       if (!userDoc.exists) {
-        final email = user.email ?? googleUser.email;
-        final name = user.displayName ?? googleUser.displayName ?? (email.split('@').first);
+        final email = user.email ?? googleEmail ?? '';
+        final name = user.displayName ?? googleDisplayName ?? (email.split('@').first);
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'name': name,
           'email': email,
@@ -191,34 +203,61 @@ class _LoginScreenState extends State<LoginScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.black, width: 2),
+        ),
         title: Row(children: [
-          Icon(Icons.location_on, color: Colors.red, size: 28),
+          Icon(Icons.location_on, color: Colors.black, size: 28),
           SizedBox(width: 8),
-          Text('Set Your Location', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text('Set Your Location', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
         ]),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           Text('Please add your location so donors/recipients near you can find you.',
-            style: TextStyle(color: Colors.black54, fontSize: 14)),
+            style: TextStyle(color: Colors.black87, fontSize: 14)),
           SizedBox(height: 16),
           TextField(
             controller: locationCtl,
             autofocus: true,
+            style: TextStyle(color: Colors.black),
             decoration: InputDecoration(
               hintText: 'e.g. Islamabad, Pakistan',
-              prefixIcon: Icon(Icons.location_on_outlined),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              hintStyle: TextStyle(color: Colors.black54),
+              prefixIcon: Icon(Icons.location_on_outlined, color: Colors.black),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.black),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.black),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.black, width: 2),
+              ),
             ),
           ),
         ]),
         actions: [
-          TextButton(
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Skip', style: TextStyle(color: Colors.grey)),
+            child: Text('Skip'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              side: BorderSide(color: Colors.black, width: 2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             onPressed: () async {
               final loc = locationCtl.text.trim();
               if (loc.isNotEmpty) {

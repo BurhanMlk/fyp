@@ -150,11 +150,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return Scaffold(
           body: Container(
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.red[50]!, Colors.white],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
+              color: Colors.transparent,
             ),
             child: SingleChildScrollView(
               child: Column(
@@ -210,8 +206,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               }
                             },
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange[700],
+                              backgroundColor: Colors.black,
                               foregroundColor: Colors.white,
+                              side: BorderSide(color: Colors.black, width: 2),
                             ),
                             child: Text('Complete'),
                           ),

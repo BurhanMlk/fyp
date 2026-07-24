@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -76,27 +77,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isSubmitting = true);
     showDialog(context: context, barrierDismissible: false, builder: (_) => Center(child: BloodBridgeLoader()));
     try {
-      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
-      final googleUser = await googleSignIn.signIn();
-      if (googleUser == null) {
-        if (mounted) { Navigator.of(context).pop(); setState(() => _isSubmitting = false); }
-        return;
+      final UserCredential userCred;
+      String? googleEmail;
+      String? googleDisplayName;
+
+      if (kIsWeb) {
+        // Web: use Firebase signInWithPopup (google_sign_in is deprecated on web)
+        userCred = await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+      } else {
+        // Mobile: use GoogleSignIn plugin
+        final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+        final googleUser = await googleSignIn.signIn();
+        if (googleUser == null) {
+          if (mounted) { Navigator.of(context).pop(); setState(() => _isSubmitting = false); }
+          return;
+        }
+        googleEmail = googleUser.email;
+        googleDisplayName = googleUser.displayName;
+        final googleAuth = await googleUser.authentication;
+        if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
+          if (mounted) Navigator.of(context).pop();
+          _showMsg('Google Sign-In failed: No ID token. Add SHA-1 in Firebase Console → Project Settings.');
+          if (mounted) setState(() => _isSubmitting = false);
+          return;
+        }
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken!,
+        );
+        userCred = await FirebaseAuth.instance.signInWithCredential(credential);
       }
-      final googleAuth = await googleUser.authentication;
-      if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
-        if (mounted) Navigator.of(context).pop();
-        _showMsg('Google Sign-In failed: No ID token. Add SHA-1 in Firebase Console → Project Settings.');
-        if (mounted) setState(() => _isSubmitting = false);
-        return;
-      }
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken!,
-      );
-      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+
       final user = userCred.user!;
-      final email = user.email ?? googleUser.email;
-      final name = user.displayName ?? googleUser.displayName ?? email.split('@').first;
+      final email = user.email ?? googleEmail ?? '';
+      final name = user.displayName ?? googleDisplayName ?? email.split('@').first;
 
       final existing = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       if (!existing.exists) {
