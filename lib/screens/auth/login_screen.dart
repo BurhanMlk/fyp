@@ -30,62 +30,6 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _ensureFirebaseSuperAdmin();
-  }
-
-  Future<void> _ensureFirebaseSuperAdmin() async {
-    try {
-      User? authUser;
-      try {
-        final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: _superAdminEmail,
-          password: _superAdminPassword,
-        );
-        authUser = credential.user;
-      } on FirebaseAuthException catch (authError) {
-        if (authError.code == 'user-not-found') {
-          // Account doesn't exist — create it
-          final created = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-            email: _superAdminEmail,
-            password: _superAdminPassword,
-          );
-          authUser = created.user;
-        } else if (authError.code == 'wrong-password' || authError.code == 'invalid-credential') {
-          // Account exists but password is wrong — can't recover here, skip
-          print('⚠️ Superadmin account exists but password is incorrect. Skipping auto-setup.');
-          return;
-        } else {
-          rethrow;
-        }
-      }
-
-      if (authUser == null) return;
-
-      final docRef = FirebaseFirestore.instance.collection('users').doc(authUser.uid);
-      final doc = await docRef.get();
-      if (!doc.exists) {
-        await docRef.set({
-          'name': 'Super Admin',
-          'email': _superAdminEmail,
-          'contact': '+92-300-1234567',
-          'bloodGroup': 'O+',
-          'role': 'super_admin',
-          'location': 'Islamabad, Pakistan',
-          'createdAt': FieldValue.serverTimestamp(),
-          'approved': true,
-          'isDonor': false,
-        });
-      } else {
-        final data = doc.data() ?? {};
-        if ((data['role'] ?? '') != 'super_admin') {
-          await docRef.update({'role': 'super_admin', 'approved': true});
-        }
-      }
-
-      await FirebaseAuth.instance.signOut();
-    } catch (e) {
-      print('⚠️ Error ensuring Firebase superadmin: $e');
-    }
   }
 
   @override
@@ -110,8 +54,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      if (email == _superAdminEmail) await _ensureFirebaseSuperAdmin();
-
       final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: pass);
       final user = credential.user;
       if (user == null) { _showTopSnackBar('Login failed.'); return; }
@@ -157,12 +99,8 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => AdminDashboard()));
     } else {
       if (!hasLocation) {
-        final locationSet = await _showLocationPopup(user.uid, email);
-        if (locationSet == true) {
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
-        } else {
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
-        }
+        await _showLocationPopup(user.uid, email);
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
       } else {
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
       }
@@ -173,7 +111,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _loginWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      final googleSignIn = GoogleSignIn();
+      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
       final googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
         if (mounted) setState(() => _isLoading = false);
@@ -181,8 +119,8 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final googleAuth = await googleUser.authentication;
-      if (googleAuth.idToken == null) {
-        _showTopSnackBar('Google Sign-In failed: Unable to authenticate. Please try again.');
+      if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
+        _showTopSnackBar('Google Sign-In failed: No ID token. Add SHA-1 in Firebase Console → Project Settings.');
         if (mounted) setState(() => _isLoading = false);
         return;
       }
@@ -233,7 +171,14 @@ class _LoginScreenState extends State<LoginScreen> {
       }
       _showTopSnackBar(msg);
     } catch (e) {
-      _showTopSnackBar('Google Sign-In failed: ${e.toString()}');
+      final errStr = e.toString();
+      if (errStr.contains('ApiException: 10')) {
+        _showTopSnackBar('Google Sign-In failed: SHA-1 fingerprint not registered in Firebase Console.');
+      } else if (errStr.contains('ApiException: 12500')) {
+        _showTopSnackBar('Google Sign-In failed: OAuth consent screen not configured.');
+      } else {
+        _showTopSnackBar('Google Sign-In failed: ${errStr.length > 100 ? errStr.substring(0, 100) : errStr}');
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -279,7 +224,6 @@ class _LoginScreenState extends State<LoginScreen> {
               if (loc.isNotEmpty) {
                 try {
                   await FirebaseFirestore.instance.collection('users').doc(uid).update({'location': loc});
-                  // Also update in Supabase
                   try { await sl.user.updateUser(uid, {'location': loc}); } catch (_) {}
                 } catch (e) { print('Error saving location: $e'); }
               }
@@ -321,7 +265,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   controller: eCtl,
                   keyboardType: TextInputType.emailAddress,
                   style: TextStyle(color: Colors.black),
-                  onSubmitted: (_) {}, // Disable Enter key
+                  onSubmitted: (_) => {},
                   decoration: InputDecoration(
                     labelText: 'Enter your email',
                     labelStyle: TextStyle(color: Colors.black),

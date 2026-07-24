@@ -37,9 +37,68 @@ class SupabaseAuthRepository implements IAuthRepository {
         .from('users')
         .select()
         .eq('auth_id', user.id)
-        .single();
+        .maybeSingle();
 
-    return UserModel.fromJson(data);
+    if (data != null) {
+      return UserModel.fromJson(Map<String, dynamic>.from(data));
+    }
+    return UserModel(
+      id: user.id,
+      name: user.userMetadata?['name'] ?? '',
+      email: user.email ?? email,
+      contact: '',
+      bloodGroup: '',
+      role: 'donor',
+      location: '',
+    );
+  }
+
+  @override
+  Future<UserModel?> signInWithGoogle() async {
+    final success = await _client.auth.signInWithOAuth(
+      OAuthProvider.google,
+      redirectTo: 'com.burhan_blood://oauth-callback',
+    );
+    if (!success) return null;
+
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
+
+    // Check if user profile exists
+    final data = await _client
+        .from('users')
+        .select()
+        .eq('auth_id', user.id)
+        .maybeSingle();
+
+    if (data != null) {
+      return UserModel.fromJson(Map<String, dynamic>.from(data));
+    }
+
+    // Create new user profile for Google sign-in
+    final newUser = UserModel(
+      id: user.id,
+      name: user.userMetadata?['full_name'] ?? user.email?.split('@').first ?? '',
+      email: user.email ?? '',
+      contact: '',
+      bloodGroup: '',
+      role: 'donor',
+      location: '',
+    );
+    await _client.from('users').insert({
+      'auth_id': user.id,
+      'name': newUser.name,
+      'email': newUser.email,
+      'contact': newUser.contact,
+      'blood_group': newUser.bloodGroup,
+      'role': newUser.role,
+      'location': newUser.location,
+      'approved': false,
+      'is_donor': true,
+      'verification_status': 'not_uploaded',
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    return newUser;
   }
 
   @override

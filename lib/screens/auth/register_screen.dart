@@ -54,7 +54,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await FirebaseAuth.instance.signOut();
       if (mounted) {
         Navigator.of(context).pop();
-        _showMsg('✅ Verification email sent! Check inbox & verify, then login.', err: false);
+        _showMsg('Verification email sent! Check inbox & verify, then login.', err: false);
         await Future.delayed(Duration(seconds: 2));
         if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => LoginScreen()));
       }
@@ -76,16 +76,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isSubmitting = true);
     showDialog(context: context, barrierDismissible: false, builder: (_) => Center(child: BloodBridgeLoader()));
     try {
-      final googleSignIn = GoogleSignIn();
+      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
       final googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
         if (mounted) { Navigator.of(context).pop(); setState(() => _isSubmitting = false); }
         return;
       }
       final googleAuth = await googleUser.authentication;
-      if (googleAuth.idToken == null) {
+      if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
         if (mounted) Navigator.of(context).pop();
-        _showMsg('Google Sign-In failed: Unable to authenticate. Please try again.');
+        _showMsg('Google Sign-In failed: No ID token. Add SHA-1 in Firebase Console → Project Settings.');
         if (mounted) setState(() => _isSubmitting = false);
         return;
       }
@@ -107,10 +107,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
-      // Google accounts are pre-verified, no need to sign out and re-login
       if (mounted) {
         Navigator.of(context).pop();
-        _showMsg('✅ Account created successfully!', err: false);
+        _showMsg('Account created successfully!', err: false);
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => LoginScreen()),
           (route) => false,
@@ -125,7 +124,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _showMsg(m);
     } catch (e) {
       if (mounted) Navigator.of(context).pop();
-      _showMsg('Google sign-up failed: $e');
+      final errStr = e.toString();
+      if (errStr.contains('ApiException: 10')) {
+        _showMsg('Google Sign-In failed: SHA-1 fingerprint not registered in Firebase Console.');
+      } else if (errStr.contains('ApiException: 12500')) {
+        _showMsg('Google Sign-In failed: OAuth consent screen not configured.');
+      } else {
+        _showMsg('Google sign-up failed: ${errStr.length > 100 ? errStr.substring(0, 100) : errStr}');
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -175,9 +181,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           Text('I want to register as:', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.black87)),
                           SizedBox(height: 10),
                           Row(children: [
-                            _roleCard('donor', '🩸 Donor', Icons.volunteer_activism),
+                            _roleCard('donor', 'Donor', Icons.volunteer_activism),
                             SizedBox(width: 12),
-                            _roleCard('recipient', '🏥 Recipient', Icons.local_hospital),
+                            _roleCard('recipient', 'Recipient', Icons.local_hospital),
                           ]),
                           SizedBox(height: 20),
 

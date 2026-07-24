@@ -1,1 +1,91 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"bloodbridge-62261","appId":"1:849500459261:android:b848cdd8268cdd1010ee94","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"bloodbridge-62261","configurations":{"android":"1:849500459261:android:b848cdd8268cdd1010ee94","web":"1:849500459261:web:1443e7ce50b7f4a410ee94"}}}}},"emulators":{"dataconnect":{"dataDir":"dataconnect/.dataconnect/pgliteData"}},"dataconnect":{"source":"dataconnect"},"firestore":{"database":"(default)","location":"asia-south2","rules":"firestore.rules","indexes":"firestore.indexes.json"},"storage":{"rules":"storage.rules"},"functions":[{"source":"functions","codebase":"default","disallowLegacyRuntimeConfig":true,"ignore":["node_modules",".git","firebase-debug.log","firebase-debug.*.log","*.local"],"predeploy":["npm --prefix \"$RESOURCE_DIR\" run lint"]}],"database":{"rules":"database.rules.json"}}
+{
+  "project_info": {
+    "project_number": "849500459261",
+    "firebase_url": "https://bloodbridge-62261-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "bloodbridge-62261",
+    "storage_bucket": "bloodbridge-62261.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:849500459261:android:b848cdd8268cdd1010ee94",
+        "android_client_info": {
+          "package_name": "com.burhan_blood"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "849500459261-mdj801vedsjf7amurgk8n8isg1ir9t1k.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.burhan_blood",
+            "certificate_hash": "845a311888f4a21a29d1cc9eb4e3d9f6d52c9761"
+          }
+        },
+        {
+          "client_id": "849500459261-uoqoe7aok0nbhinr7rt08knrkp0bqo3b.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDI5Gv39REO-CfCkYJFlA3UziQlnZrd4ok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "849500459261-uoqoe7aok0nbhinr7rt08knrkp0bqo3b.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "849500459261-5ukq86j3obs9giib7lohc7hdgjo0jqhn.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.bloodBridgeFlutter"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:849500459261:android:0ee895f93f1a336010ee94",
+        "android_client_info": {
+          "package_name": "com.example.blood_bridge_flutter"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "849500459261-uoqoe7aok0nbhinr7rt08knrkp0bqo3b.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDI5Gv39REO-CfCkYJFlA3UziQlnZrd4ok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "849500459261-uoqoe7aok0nbhinr7rt08knrkp0bqo3b.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "849500459261-5ukq86j3obs9giib7lohc7hdgjo0jqhn.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.bloodBridgeFlutter"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

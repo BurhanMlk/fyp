@@ -7,6 +7,9 @@ abstract class IAuthRepository {
   /// Sign in with email and password
   Future<UserModel?> signIn(String email, String password);
 
+  /// Sign in with Google OAuth
+  Future<UserModel?> signInWithGoogle();
+
   /// Register a new user with email and password
   Future<UserModel?> signUp(String email, String password);
 

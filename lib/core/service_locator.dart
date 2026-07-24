@@ -35,7 +35,7 @@ class ServiceLocator {
   ServiceLocator._internal();
 
   /// Set to [BackendProvider.firebase] to revert to Firebase.
-  BackendProvider _provider = BackendProvider.supabase;
+  BackendProvider _provider = BackendProvider.firebase;
 
   // Repository instances (lazy-initialized)
   IAuthRepository? _authRepo;
