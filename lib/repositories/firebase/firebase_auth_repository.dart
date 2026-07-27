@@ -48,12 +48,17 @@ class FirebaseAuthRepository implements IAuthRepository {
 
   @override
   Future<UserModel?> signInWithGoogle() async {
-    final googleSignIn = GoogleSignIn();
+    final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
     final googleUser = await googleSignIn.signIn();
     if (googleUser == null) return null;
 
     final googleAuth = await googleUser.authentication;
-    if (googleAuth.idToken == null) return null;
+    if (googleAuth.idToken == null || googleAuth.idToken!.isEmpty) {
+      throw Exception(
+        'Google Sign-In failed: No ID token returned. '
+        'Ensure SHA-1 fingerprints are registered in Firebase Console → Project Settings → Your App.',
+      );
+    }
 
     final credential = GoogleAuthProvider.credential(
       accessToken: googleAuth.accessToken,
