@@ -23,6 +23,7 @@ class BloodRequestModel {
   final String? responseMessage;
   final int? units;
   final bool? isEmergency;
+  final String? organizationId; // Multi-tenant: org that owns this request
   final Map<String, dynamic>? extraData;
 
   const BloodRequestModel({
@@ -46,6 +47,7 @@ class BloodRequestModel {
     this.responseMessage,
     this.units,
     this.isEmergency = false,
+    this.organizationId,
     this.extraData,
   });
 
@@ -71,6 +73,7 @@ class BloodRequestModel {
       responseMessage: data['responseMessage']?.toString(),
       units: data['units'] is int ? data['units'] : int.tryParse(data['units']?.toString() ?? ''),
       isEmergency: data['isEmergency'] == true,
+      organizationId: data['organizationId']?.toString(),
       extraData: data,
     );
   }
@@ -97,6 +100,7 @@ class BloodRequestModel {
       responseMessage: json['response_message']?.toString() ?? json['responseMessage']?.toString(),
       units: json['units'] is int ? json['units'] : int.tryParse(json['units']?.toString() ?? ''),
       isEmergency: json['is_emergency'] == true || json['isEmergency'] == true,
+      organizationId: json['organization_id']?.toString() ?? json['organizationId']?.toString(),
     );
   }
 
@@ -121,6 +125,7 @@ class BloodRequestModel {
       if (responseMessage != null) 'responseMessage': responseMessage,
       if (units != null) 'units': units,
       'isEmergency': isEmergency,
+      if (organizationId != null) 'organizationId': organizationId,
     };
   }
 
@@ -146,6 +151,7 @@ class BloodRequestModel {
       'response_message': responseMessage,
       'units': units,
       'is_emergency': isEmergency,
+      if (organizationId != null) 'organization_id': organizationId,
     };
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'auth/login_screen.dart';
 import 'auth/register_screen.dart';
+import 'admin/organization_registration_screen.dart';
 import '../widgets/animated_blood_bg.dart';
 import '../widgets/top_snackbar.dart';
 
@@ -229,6 +230,30 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                                   style: TextStyle(
                                       color: Colors.black87,
                                       fontSize: 16,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          // Register Organization
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.red.shade700,
+                                backgroundColor: Colors.red.shade50,
+                                side: BorderSide(
+                                    color: Colors.red.shade700, width: 1.5),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (_) => const OrganizationRegistrationScreen())),
+                              child: const Text('Register Organization',
+                                  style: TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 14,
                                       fontWeight: FontWeight.w600)),
                             ),
                           ),

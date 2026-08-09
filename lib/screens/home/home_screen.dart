@@ -4,6 +4,9 @@ import '../dashboard/overview_screen.dart';
 import '../dashboard/pending_requests_screen.dart';
 import '../profile/profile_screen.dart';
 import '../admin/admin_dashboard.dart';
+import '../admin/blood_bank_admin_dashboard.dart';
+import '../admin/university_admin_dashboard.dart';
+import '../admin/society_admin_dashboard.dart';
 import '../donors/donor_list_screen.dart';
 import '../recipients/recipient_list_screen.dart';
 import '../auth/login_screen.dart';
@@ -94,12 +97,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkPendingBadge();
   }
 
-  // Navigate to admin dashboard if superadmin
+  // Navigate to appropriate admin dashboard based on role
   void _checkAndNavigateToAdmin() {
-    if (_isSuperAdmin) {
+    final role = _currentRole;
+    Widget? target;
+    if (role == 'super_admin' || role == 'admin') {
+      target = const AdminDashboard();
+    } else if (role == 'blood_bank_admin') {
+      target = const BloodBankAdminDashboard();
+    } else if (role == 'university_admin') {
+      target = const UniversityAdminDashboard();
+    } else if (role == 'society_admin') {
+      target = const SocietyAdminDashboard();
+    }
+
+    if (target != null) {
       Future.microtask(() {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => AdminDashboard()),
+          MaterialPageRoute(builder: (_) => target!),
         );
       });
     }
@@ -174,9 +189,13 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _currentRole = role;
           _currentEmail = user.email;
-          _isSuperAdmin = role == 'super_admin';
+          _isSuperAdmin = (role == 'super_admin' || role == 'admin');
         });
-        if (role == 'super_admin') _checkAndNavigateToAdmin();
+        // Redirect any admin role to their dashboard
+        if (role == 'super_admin' || role == 'admin' || role == 'blood_bank_admin' ||
+            role == 'university_admin' || role == 'society_admin') {
+          _checkAndNavigateToAdmin();
+        }
         _checkPendingBadge();
       } catch (_) {
         setState(() {

@@ -10,6 +10,9 @@ import '../../widgets/top_snackbar.dart';
 import 'register_screen.dart';
 import '../home/home_screen.dart';
 import '../admin/admin_dashboard.dart';
+import '../admin/blood_bank_admin_dashboard.dart';
+import '../admin/university_admin_dashboard.dart';
+import '../admin/society_admin_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -87,25 +90,36 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   /// Shared navigation logic after successful login
+  /// Routes to the appropriate dashboard based on user role.
   Future<void> _navigateAfterLogin(User user) async {
     final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
     if (!mounted) return;
 
     final data = userDoc.data() ?? {};
     final email = user.email ?? '';
-    final role = data['role'] ?? '';
+    final role = (data['role'] ?? '').toString();
     final hasLocation = (data['location'] ?? '').toString().isNotEmpty;
 
-    if (email == _superAdminEmail || role == 'super_admin' || role == 'admin') {
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => AdminDashboard()));
+    // ── Multi-tenant role-based routing ──
+    Widget targetScreen;
+
+    if (email == _superAdminEmail || role == 'super_admin') {
+      targetScreen = const AdminDashboard();
+    } else if (role == 'blood_bank_admin') {
+      targetScreen = const BloodBankAdminDashboard();
+    } else if (role == 'university_admin') {
+      targetScreen = const UniversityAdminDashboard();
+    } else if (role == 'society_admin') {
+      targetScreen = const SocietyAdminDashboard();
+    } else if (role == 'admin') {
+      // Legacy admin → route to super admin for backward compatibility
+      targetScreen = const AdminDashboard();
     } else {
-      if (!hasLocation) {
-        await _showLocationPopup(user.uid, email);
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
-      } else {
-        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen()));
-      }
+      // Donor, Recipient, Volunteer → HomeScreen
+      targetScreen = const HomeScreen();
     }
+
+    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => targetScreen));
   }
 
   /// Google Sign-In for login

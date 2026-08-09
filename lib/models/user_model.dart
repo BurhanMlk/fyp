@@ -9,7 +9,9 @@ class UserModel {
   final String email;
   final String contact;
   final String bloodGroup;
-  final String role; // 'donor', 'recipient', 'admin', 'super_admin', 'blood_bank'
+  /// Role: 'super_admin', 'university_admin', 'society_admin',
+  /// 'blood_bank_admin', 'donor', 'recipient', 'volunteer'
+  final String role;
   final String location;
   final String? designation;
   final int? age;
@@ -24,6 +26,13 @@ class UserModel {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final DateTime? cooldownUntil;
+
+  // ── Multi-tenant fields ──
+  final String? organizationId; // The org this user belongs to
+  final String? universityId;   // If in a university
+  final String? societyId;      // If in a society
+  final String? bloodBankId;    // If in a blood bank
+
   final Map<String, dynamic>? extraData; // For any additional fields
 
   const UserModel({
@@ -47,6 +56,10 @@ class UserModel {
     this.createdAt,
     this.updatedAt,
     this.cooldownUntil,
+    this.organizationId,
+    this.universityId,
+    this.societyId,
+    this.bloodBankId,
     this.extraData,
   });
 
@@ -73,6 +86,10 @@ class UserModel {
       createdAt: _parseDateTime(data['createdAt']),
       updatedAt: _parseDateTime(data['updatedAt']),
       cooldownUntil: _parseDateTime(data['cooldownUntil']),
+      organizationId: data['organizationId']?.toString(),
+      universityId: data['universityId']?.toString(),
+      societyId: data['societyId']?.toString(),
+      bloodBankId: data['bloodBankId']?.toString(),
       extraData: data,
     );
   }
@@ -100,6 +117,10 @@ class UserModel {
       createdAt: _parseDateTime(json['created_at'] ?? json['createdAt']),
       updatedAt: _parseDateTime(json['updated_at'] ?? json['updatedAt']),
       cooldownUntil: _parseDateTime(json['cooldown_until'] ?? json['cooldownUntil']),
+      organizationId: json['organization_id']?.toString() ?? json['organizationId']?.toString(),
+      universityId: json['university_id']?.toString() ?? json['universityId']?.toString(),
+      societyId: json['society_id']?.toString() ?? json['societyId']?.toString(),
+      bloodBankId: json['blood_bank_id']?.toString() ?? json['bloodBankId']?.toString(),
     );
   }
 
@@ -125,6 +146,10 @@ class UserModel {
       'createdAt': createdAt?.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
       if (cooldownUntil != null) 'cooldownUntil': cooldownUntil!.toIso8601String(),
+      if (organizationId != null) 'organizationId': organizationId,
+      if (universityId != null) 'universityId': universityId,
+      if (societyId != null) 'societyId': societyId,
+      if (bloodBankId != null) 'bloodBankId': bloodBankId,
     };
   }
 
@@ -151,6 +176,10 @@ class UserModel {
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
       'cooldown_until': cooldownUntil?.toIso8601String(),
+      if (organizationId != null) 'organization_id': organizationId,
+      if (universityId != null) 'university_id': universityId,
+      if (societyId != null) 'society_id': societyId,
+      if (bloodBankId != null) 'blood_bank_id': bloodBankId,
     };
   }
 
@@ -175,6 +204,10 @@ class UserModel {
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? cooldownUntil,
+    String? organizationId,
+    String? universityId,
+    String? societyId,
+    String? bloodBankId,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -197,6 +230,10 @@ class UserModel {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       cooldownUntil: cooldownUntil ?? this.cooldownUntil,
+      organizationId: organizationId ?? this.organizationId,
+      universityId: universityId ?? this.universityId,
+      societyId: societyId ?? this.societyId,
+      bloodBankId: bloodBankId ?? this.bloodBankId,
     );
   }
 

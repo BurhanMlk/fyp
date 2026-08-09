@@ -249,6 +249,174 @@ CREATE TRIGGER update_blood_requests_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================================
+-- MULTI-TENANT TABLES (v2.0)
+-- ============================================================================
+
+-- 7. ORGANIZATIONS TABLE
+CREATE TABLE organizations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    type VARCHAR(20) NOT NULL CHECK (type IN ('university', 'society', 'blood_bank', 'ngo')),
+    name VARCHAR(255) NOT NULL,
+    logo_url TEXT,
+    email VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    address TEXT,
+    city VARCHAR(100),
+    province VARCHAR(100),
+    website VARCHAR(255),
+    description TEXT,
+    license_number VARCHAR(100),
+    university_id UUID REFERENCES organizations(id),
+    admin_id VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'active', 'suspended', 'rejected')),
+    subscription_id UUID,
+    trial_end_date TIMESTAMPTZ,
+    branding JSONB,
+    settings JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_organizations_type ON organizations(type);
+CREATE INDEX idx_organizations_status ON organizations(status);
+CREATE INDEX idx_organizations_university_id ON organizations(university_id);
+
+-- 8. SUBSCRIPTION PLANS TABLE
+CREATE TABLE subscription_plans (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    price DECIMAL(10,2) NOT NULL DEFAULT 0,
+    currency VARCHAR(5) DEFAULT 'PKR',
+    max_users INTEGER,
+    max_societies INTEGER,
+    max_admins INTEGER,
+    max_blood_requests INTEGER,
+    max_storage_mb INTEGER,
+    features TEXT[] DEFAULT '{}',
+    is_active BOOLEAN DEFAULT TRUE,
+    trial_days INTEGER,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. SUBSCRIPTIONS TABLE
+CREATE TABLE subscriptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    plan_id UUID NOT NULL REFERENCES subscription_plans(id),
+    plan_name VARCHAR(100),
+    start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    end_date TIMESTAMPTZ,
+    status VARCHAR(20) DEFAULT 'trial' CHECK (status IN ('trial', 'active', 'expiring_soon', 'expired', 'suspended', 'cancelled')),
+    payment_status VARCHAR(20) DEFAULT 'not_required' CHECK (payment_status IN ('paid', 'pending', 'failed', 'not_required')),
+    auto_renewal BOOLEAN DEFAULT FALSE,
+    amount DECIMAL(10,2) DEFAULT 0,
+    currency VARCHAR(5) DEFAULT 'PKR',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_subscriptions_org_id ON subscriptions(organization_id);
+CREATE INDEX idx_subscriptions_status ON subscriptions(status);
+
+-- 10. PAYMENTS TABLE
+CREATE TABLE payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    subscription_id UUID NOT NULL REFERENCES subscriptions(id),
+    invoice_id UUID,
+    amount DECIMAL(10,2) NOT NULL,
+    currency VARCHAR(5) DEFAULT 'PKR',
+    payment_method VARCHAR(30) DEFAULT 'manual',
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'refunded')),
+    transaction_id VARCHAR(255),
+    receipt_url TEXT,
+    notes TEXT,
+    payment_date TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_payments_org_id ON payments(organization_id);
+
+-- 11. INVOICES TABLE
+CREATE TABLE invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invoice_number VARCHAR(50) UNIQUE NOT NULL,
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    organization_name VARCHAR(255),
+    subscription_id UUID NOT NULL REFERENCES subscriptions(id),
+    plan_name VARCHAR(100),
+    payment_id UUID NOT NULL REFERENCES payments(id),
+    amount DECIMAL(10,2) NOT NULL,
+    currency VARCHAR(5) DEFAULT 'PKR',
+    payment_method VARCHAR(30),
+    transaction_id VARCHAR(255),
+    invoice_date TIMESTAMPTZ DEFAULT NOW(),
+    subscription_start_date TIMESTAMPTZ NOT NULL,
+    subscription_end_date TIMESTAMPTZ,
+    status VARCHAR(20) DEFAULT 'paid' CHECK (status IN ('paid', 'pending', 'cancelled')),
+    metadata JSONB
+);
+CREATE INDEX idx_invoices_org_id ON invoices(organization_id);
+
+-- 12. BLOOD INVENTORY TABLE
+CREATE TABLE blood_inventory (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    blood_bank_id UUID NOT NULL REFERENCES organizations(id),
+    blood_group VARCHAR(5) NOT NULL CHECK (blood_group IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')),
+    quantity INTEGER DEFAULT 0,
+    unit VARCHAR(10) DEFAULT 'units',
+    collection_date TIMESTAMPTZ NOT NULL,
+    expiry_date TIMESTAMPTZ NOT NULL,
+    status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'low_stock', 'expiring_soon', 'expired', 'used')),
+    batch_number VARCHAR(100),
+    donor_id UUID REFERENCES users(id),
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_blood_inventory_bank_id ON blood_inventory(blood_bank_id);
+CREATE INDEX idx_blood_inventory_blood_group ON blood_inventory(blood_group);
+CREATE INDEX idx_blood_inventory_status ON blood_inventory(status);
+
+-- Add multi-tenant columns to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS university_id UUID REFERENCES organizations(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS society_id UUID REFERENCES organizations(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS blood_bank_id UUID REFERENCES organizations(id);
+
+-- Add organization_id to blood_requests
+ALTER TABLE blood_requests ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+
+-- ============================================================================
+-- RLS POLICIES FOR NEW TABLES
+-- ============================================================================
+ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscription_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE blood_inventory ENABLE ROW LEVEL SECURITY;
+
+-- Organizations: super admin can do everything; org admins can read their own
+CREATE POLICY "Super admin full access" ON organizations FOR ALL USING (
+    EXISTS (SELECT 1 FROM users WHERE auth_id::text = auth.uid()::text AND role = 'super_admin')
+);
+CREATE POLICY "Org admin can read own org" ON organizations FOR SELECT USING (
+    EXISTS (SELECT 1 FROM users WHERE auth_id::text = auth.uid()::text AND organization_id = organizations.id)
+);
+
+-- Subscription plans: anyone authenticated can read; only super admin can write
+CREATE POLICY "Anyone can read plans" ON subscription_plans FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Super admin can write plans" ON subscription_plans FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM users WHERE auth_id::text = auth.uid()::text AND role = 'super_admin')
+);
+
+-- Blood inventory: blood bank admins can read/write their own
+CREATE POLICY "Blood bank admins manage own inventory" ON blood_inventory FOR ALL USING (
+    EXISTS (SELECT 1 FROM users WHERE auth_id::text = auth.uid()::text AND blood_bank_id = blood_inventory.blood_bank_id)
+);
+
+-- ============================================================================
 -- VIEW: Donor leaderboard (for gamification)
 -- ============================================================================
 CREATE VIEW donor_leaderboard AS

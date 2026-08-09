@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../auth/login_screen.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'super_admin_organizations_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -1782,6 +1783,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         return 'Analytics & Reports';
       case 'ai_matching':
         return 'AI Matching & Prediction';
+      case 'organizations':
+        return 'Organization Management';
       default:
         return 'Admin Dashboard';
     }
@@ -1882,6 +1885,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Text('MODULES', style: TextStyle(fontSize: 10, color: Colors.black54, fontWeight: FontWeight.bold)),
+          ),
+          // Organizations Management
+          ListTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Icon(Icons.business_center, size: 20, color: _currentModule == 'organizations' ? Color(0xFFD32F2F) : Colors.grey),
+            title: Text('Organizations', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'organizations' ? FontWeight.bold : FontWeight.normal)),
+            selected: _currentModule == 'organizations',
+            onTap: () {
+              setState(() => _currentModule = 'organizations');
+              Navigator.pop(context);
+            },
           ),
           // M1: User Registration & Profile Management
           ListTile(
@@ -2078,6 +2093,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         return _buildAnalyticsModule();
       case 'ai_matching':
         return _buildAIMatchingModule();
+      case 'organizations':
+        return const SuperAdminOrganizationsScreen();
       default:
         return _buildOverview();
     }

@@ -1,6 +1,5 @@
 /// Service Locator / Dependency Injection container for Blood Bridge.
-/// Currently configured for Supabase (PostgreSQL).
-/// To switch back to Firebase, change _provider below.
+/// Supports dual backend: Firebase (Firestore) and Supabase (PostgreSQL).
 
 import '../repositories/i_auth_repository.dart';
 import '../repositories/i_user_repository.dart';
@@ -9,6 +8,12 @@ import '../repositories/i_chat_repository.dart';
 import '../repositories/i_broadcast_repository.dart';
 import '../repositories/i_donation_repository.dart';
 import '../repositories/i_storage_repository.dart';
+import '../repositories/i_organization_repository.dart';
+import '../repositories/i_subscription_plan_repository.dart';
+import '../repositories/i_subscription_repository.dart';
+import '../repositories/i_payment_repository.dart';
+import '../repositories/i_invoice_repository.dart';
+import '../repositories/i_blood_inventory_repository.dart';
 
 import '../repositories/firebase/firebase_auth_repository.dart';
 import '../repositories/firebase/firebase_user_repository.dart';
@@ -17,6 +22,12 @@ import '../repositories/firebase/firebase_chat_repository.dart';
 import '../repositories/firebase/firebase_broadcast_repository.dart';
 import '../repositories/firebase/firebase_donation_repository.dart';
 import '../repositories/firebase/firebase_storage_repository.dart';
+import '../repositories/firebase/firebase_organization_repository.dart';
+import '../repositories/firebase/firebase_subscription_plan_repository.dart';
+import '../repositories/firebase/firebase_subscription_repository.dart';
+import '../repositories/firebase/firebase_payment_repository.dart';
+import '../repositories/firebase/firebase_invoice_repository.dart';
+import '../repositories/firebase/firebase_blood_inventory_repository.dart';
 
 import '../repositories/supabase/supabase_auth_repository.dart';
 import '../repositories/supabase/supabase_user_repository.dart';
@@ -45,6 +56,12 @@ class ServiceLocator {
   IBroadcastRepository? _broadcastRepo;
   IDonationRepository? _donationRepo;
   IStorageRepository? _storageRepo;
+  IOrganizationRepository? _orgRepo;
+  ISubscriptionPlanRepository? _planRepo;
+  ISubscriptionRepository? _subscriptionRepo;
+  IPaymentRepository? _paymentRepo;
+  IInvoiceRepository? _invoiceRepo;
+  IBloodInventoryRepository? _bloodInventoryRepo;
 
   /// Switch the backend provider.
   void setProvider(BackendProvider provider) {
@@ -57,6 +74,12 @@ class ServiceLocator {
     _broadcastRepo = null;
     _donationRepo = null;
     _storageRepo = null;
+    _orgRepo = null;
+    _planRepo = null;
+    _subscriptionRepo = null;
+    _paymentRepo = null;
+    _invoiceRepo = null;
+    _bloodInventoryRepo = null;
   }
 
   BackendProvider get currentProvider => _provider;
@@ -110,6 +133,36 @@ class ServiceLocator {
         ? SupabaseStorageRepository()
         : FirebaseStorageRepository();
     return _storageRepo!;
+  }
+
+  IOrganizationRepository get organization {
+    _orgRepo ??= FirebaseOrganizationRepository();
+    return _orgRepo!;
+  }
+
+  ISubscriptionPlanRepository get subscriptionPlan {
+    _planRepo ??= FirebaseSubscriptionPlanRepository();
+    return _planRepo!;
+  }
+
+  ISubscriptionRepository get subscription {
+    _subscriptionRepo ??= FirebaseSubscriptionRepository();
+    return _subscriptionRepo!;
+  }
+
+  IPaymentRepository get payment {
+    _paymentRepo ??= FirebasePaymentRepository();
+    return _paymentRepo!;
+  }
+
+  IInvoiceRepository get invoice {
+    _invoiceRepo ??= FirebaseInvoiceRepository();
+    return _invoiceRepo!;
+  }
+
+  IBloodInventoryRepository get bloodInventory {
+    _bloodInventoryRepo ??= FirebaseBloodInventoryRepository();
+    return _bloodInventoryRepo!;
   }
 }
 

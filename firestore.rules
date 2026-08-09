@@ -2,21 +2,99 @@ rules_version='2'
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users collection - authenticated users can read all, write their own
+
+    // ── Helper functions ──
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isSuperAdmin() {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+    
+    function isOrgAdmin(orgId) {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function getUserOrgId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId;
+    }
+
+    // ── Users collection ──
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      // Authenticated users can read
+      allow read: if isSignedIn();
+      // Users can write their own data; super admin can write any
+      allow write: if isSignedIn() && 
+        (request.auth.uid == userId || isSuperAdmin());
+      // Prevent non-super-admin from changing role to super_admin
+      allow update: if isSignedIn() && (
+        (request.auth.uid == userId && 
+         (!(request.resource.data.role in ['super_admin']) || isSuperAdmin())) ||
+        isSuperAdmin()
+      );
     }
     
-    // Blood requests collection - authenticated users can read all, write their own
+    // ── Organizations collection ──
+    match /organizations/{orgId} {
+      // Super admin: full access. Org admins: read own org. Others: none.
+      allow read: if isSuperAdmin() || 
+        (isSignedIn() && getUserOrgId() == orgId);
+      allow write: if isSuperAdmin();
+    }
+
+    // ── Blood requests ──
     match /bloodRequests/{requestId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
     }
-    
-    // Allow all other collections to be accessible for authenticated users
+
+    // ── Subscriptions ──
+    match /subscriptions/{subId} {
+      allow read: if isSuperAdmin() || 
+        (isSignedIn() && resource.data.organizationId == getUserOrgId());
+      allow write: if isSuperAdmin();
+    }
+
+    // ── Subscription plans ──
+    match /subscription_plans/{planId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // ── Payments ──
+    match /payments/{paymentId} {
+      allow read: if isSuperAdmin() || 
+        (isSignedIn() && resource.data.organizationId == getUserOrgId());
+      allow write: if isSuperAdmin();
+    }
+
+    // ── Invoices ──
+    match /invoices/{invoiceId} {
+      allow read: if isSuperAdmin() || 
+        (isSignedIn() && resource.data.organizationId == getUserOrgId());
+      allow write: if isSuperAdmin();
+    }
+
+    // ── Blood inventory ──
+    match /blood_inventory/{inventoryId} {
+      allow read: if isSuperAdmin() || 
+        (isSignedIn() && resource.data.bloodBankId == getUserOrgId());
+      allow write: if isSuperAdmin() || 
+        (isSignedIn() && 
+         getUserRole() == 'blood_bank_admin' && 
+         getUserOrgId() == resource.data.bloodBankId);
+    }
+
+    // ── Legacy / other collections ──
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isSignedIn();
     }
   }
 }
