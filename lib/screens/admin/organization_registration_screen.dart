@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import '../../core/service_locator.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../auth/login_screen.dart';
 import '../../models/organization_model.dart';
 import '../../widgets/top_snackbar.dart';
-import '../../widgets/blood_bridge_loader.dart';
 
 /// Organization Registration / Application Screen
 /// New organizations can apply to join BloodBridge.
@@ -17,7 +18,7 @@ class OrganizationRegistrationScreen extends StatefulWidget {
 
 class _OrganizationRegistrationScreenState extends State<OrganizationRegistrationScreen> {
   final _formKey = GlobalKey<FormState>();
-  String _type = 'university';
+  String _type = 'society';
   final _nameCtl = TextEditingController();
   final _emailCtl = TextEditingController();
   final _phoneCtl = TextEditingController();
@@ -25,11 +26,12 @@ class _OrganizationRegistrationScreenState extends State<OrganizationRegistratio
   final _cityCtl = TextEditingController();
   final _provinceCtl = TextEditingController();
   final _websiteCtl = TextEditingController();
-  final _descriptionCtl = TextEditingController();
-  final _licenseCtl = TextEditingController(); // For blood banks
+  final _licenseCtl = TextEditingController();
   final _adminEmailCtl = TextEditingController();
   final _adminNameCtl = TextEditingController();
+  final _adminPassCtl = TextEditingController();
   bool _isSubmitting = false;
+  bool _showAdminPass = false;
 
   @override
   void dispose() {
@@ -40,48 +42,102 @@ class _OrganizationRegistrationScreenState extends State<OrganizationRegistratio
     _cityCtl.dispose();
     _provinceCtl.dispose();
     _websiteCtl.dispose();
-    _descriptionCtl.dispose();
     _licenseCtl.dispose();
     _adminEmailCtl.dispose();
     _adminNameCtl.dispose();
+    _adminPassCtl.dispose();
     super.dispose();
   }
 
   Future<void> _submitApplication() async {
     if (!_formKey.currentState!.validate()) return;
+
     setState(() => _isSubmitting = true);
-
     try {
-      final org = OrganizationModel(
-        id: '',
-        type: _type,
-        name: _nameCtl.text.trim(),
-        email: _emailCtl.text.trim(),
-        phone: _phoneCtl.text.trim(),
-        address: _addressCtl.text.trim(),
-        city: _cityCtl.text.trim(),
-        province: _provinceCtl.text.trim(),
-        website: _websiteCtl.text.trim(),
-        description: _descriptionCtl.text.trim(),
-        licenseNumber: _type == 'blood_bank' ? _licenseCtl.text.trim() : null,
-        adminId: _adminEmailCtl.text.trim(), // Will be updated when admin account is created
-        status: 'pending',
-      );
+      final adminEmail = _adminEmailCtl.text.trim();
+      final adminPass = _adminPassCtl.text;
+      final adminName = _adminNameCtl.text.trim();
+      final orgType = _type;
+      String adminUid = '';
 
-      await sl.organization.createOrganization(org);
+      // Create Firebase Auth account NOW so admin can login
+      try {
+        final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: adminEmail,
+          password: adminPass,
+        );
+        adminUid = cred.user!.uid;
+        await cred.user!.updateDisplayName(adminName);
+
+        // Send verification email (in case the account is used elsewhere).
+        try {
+          await cred.user!.sendEmailVerification();
+        } catch (_) {}
+
+        // Create the organization FIRST so we get its document ID.
+        // The admin user record is then linked to this organization.
+        final orgRef = await FirebaseFirestore.instance.collection('organizations').add({
+          'type': orgType,
+          'name': _nameCtl.text.trim(),
+          'email': _emailCtl.text.trim(),
+          'phone': _phoneCtl.text.trim(),
+          'address': _addressCtl.text.trim(),
+          'city': _cityCtl.text.trim(),
+          'province': _provinceCtl.text.trim(),
+          'website': _websiteCtl.text.trim(),
+          if (orgType == 'blood_bank') 'licenseNumber': _licenseCtl.text.trim(),
+          'adminId': adminUid,
+          'adminName': adminName,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        final orgId = orgRef.id;
+
+        // Write the admin user record with the correct role and
+        // the type-specific ID so the right dashboard loads after approval.
+        final role = OrganizationModel.adminRoleForType(orgType);
+        await FirebaseFirestore.instance.collection('users').doc(adminUid).set({
+          'name': adminName,
+          'email': adminEmail,
+          'contact': _phoneCtl.text.trim(),
+          'bloodGroup': '',
+          'role': role,
+          'location': '${_cityCtl.text.trim()}, ${_provinceCtl.text.trim()}',
+          'approved': false,
+          'isDonor': false,
+          'organizationId': orgId,
+          if (orgType == 'blood_bank') 'bloodBankId': orgId,
+          if (orgType == 'society' || orgType == 'ngo') 'societyId': orgId,
+          if (orgType == 'university') 'universityId': orgId,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        // Now sign out so admin can login fresh (after approval)
+        await FirebaseAuth.instance.signOut();
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'email-already-in-use') {
+          showTopSnackBar(context, message: 'This email is already registered. Use a different admin email.');
+          if (mounted) setState(() => _isSubmitting = false);
+          return;
+        }
+        if (e.code == 'weak-password') {
+          showTopSnackBar(context, message: 'Password too weak. Use at least 6 characters.');
+          if (mounted) setState(() => _isSubmitting = false);
+          return;
+        }
+        rethrow;
+      }
 
       if (mounted) {
-        showTopSnackBar(
-          context,
-          message: 'Application submitted! We will review and get back to you.',
-          backgroundColor: Colors.green.shade700,
+        showTopSnackBar(context, message: 'Registered! You can login now. Awaiting approval.', backgroundColor: Colors.green.shade700);
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (route) => false,
         );
-        Navigator.pop(context);
       }
     } catch (e) {
-      if (mounted) {
-        showTopSnackBar(context, message: 'Failed to submit: $e');
-      }
+      if (mounted) showTopSnackBar(context, message: 'Failed: $e');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -131,41 +187,47 @@ class _OrganizationRegistrationScreenState extends State<OrganizationRegistratio
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: _type,
+                dropdownColor: Colors.white,
+                icon: const Icon(Icons.arrow_drop_down, color: Colors.black87),
                 decoration: InputDecoration(
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                   filled: true,
-                  fillColor: Colors.grey.shade50,
+                  fillColor: Colors.white,
+                  prefixIcon: const Icon(Icons.category_outlined),
                 ),
                 items: const [
-                  DropdownMenuItem(value: 'university', child: Text('🏫 University')),
-                  DropdownMenuItem(value: 'society', child: Text('👥 University Society')),
-                  DropdownMenuItem(value: 'blood_bank', child: Text('🏥 Blood Bank')),
-                  DropdownMenuItem(value: 'ngo', child: Text('🤝 NGO / Other Organization')),
+                  DropdownMenuItem(value: 'university', child: Text('University')),
+                  DropdownMenuItem(value: 'society', child: Text('University Society / Student Society')),
+                  DropdownMenuItem(value: 'blood_bank', child: Text('Blood Bank / Hospital')),
+                  DropdownMenuItem(value: 'ngo', child: Text('NGO / Other Organization')),
                 ],
                 onChanged: (v) => setState(() => _type = v!),
               ),
               const SizedBox(height: 20),
 
-              // Organization Details
+              // Organization Details (2-column layout)
               const Text('Organization Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               const SizedBox(height: 8),
-              _buildField(_nameCtl, 'Organization Name *', Icons.business),
+              Row(children: [
+                Expanded(child: _buildField(_nameCtl, 'Org Name *', Icons.business)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildField(_emailCtl, 'Org Email *', Icons.email, keyboardType: TextInputType.emailAddress)),
+              ]),
               const SizedBox(height: 12),
-              _buildField(_emailCtl, 'Organization Email *', Icons.email, keyboardType: TextInputType.emailAddress),
+              Row(children: [
+                Expanded(child: _buildField(_phoneCtl, 'Phone *', Icons.phone, keyboardType: TextInputType.phone)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildField(_cityCtl, 'City', Icons.location_city)),
+              ]),
               const SizedBox(height: 12),
-              _buildField(_phoneCtl, 'Phone Number *', Icons.phone, keyboardType: TextInputType.phone),
+              Row(children: [
+                Expanded(child: _buildField(_provinceCtl, 'Province', Icons.map)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildField(_websiteCtl, 'Website', Icons.language)),
+              ]),
               const SizedBox(height: 12),
               _buildField(_addressCtl, 'Address', Icons.location_on, maxLines: 2),
-              const SizedBox(height: 12),
-              _buildField(_cityCtl, 'City', Icons.location_city),
-              const SizedBox(height: 12),
-              _buildField(_provinceCtl, 'Province', Icons.map),
-              const SizedBox(height: 12),
-              _buildField(_websiteCtl, 'Website (optional)', Icons.language),
-              const SizedBox(height: 12),
-              _buildField(_descriptionCtl, 'Description (optional)', Icons.description, maxLines: 3),
 
-              // Blood Bank specific
               if (_type == 'blood_bank') ...[
                 const SizedBox(height: 12),
                 _buildField(_licenseCtl, 'License / Registration Number *', Icons.assignment),
@@ -173,12 +235,16 @@ class _OrganizationRegistrationScreenState extends State<OrganizationRegistratio
 
               const SizedBox(height: 20),
 
-              // Admin Contact
-              const Text('Admin Contact', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              // Admin Contact (2-column)
+              const Text('Admin Account', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               const SizedBox(height: 8),
-              _buildField(_adminNameCtl, 'Admin Name *', Icons.person),
+              Row(children: [
+                Expanded(child: _buildField(_adminNameCtl, 'Admin Name *', Icons.person)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildField(_adminEmailCtl, 'Admin Email *', Icons.email, keyboardType: TextInputType.emailAddress)),
+              ]),
               const SizedBox(height: 12),
-              _buildField(_adminEmailCtl, 'Admin Email *', Icons.email, keyboardType: TextInputType.emailAddress),
+              _buildPasswordField(),
 
               const SizedBox(height: 24),
 
@@ -220,6 +286,29 @@ class _OrganizationRegistrationScreenState extends State<OrganizationRegistratio
       keyboardType: keyboardType,
       maxLines: maxLines,
       validator: label.contains('*') ? (v) => (v == null || v.trim().isEmpty) ? 'Required' : null : null,
+    );
+  }
+
+  Widget _buildPasswordField() {
+    return TextFormField(
+      controller: _adminPassCtl,
+      obscureText: !_showAdminPass,
+      decoration: InputDecoration(
+        labelText: 'Password *',
+        prefixIcon: const Icon(Icons.lock),
+        suffixIcon: IconButton(
+          icon: Icon(_showAdminPass ? Icons.visibility : Icons.visibility_off),
+          onPressed: () => setState(() => _showAdminPass = !_showAdminPass),
+        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+      ),
+      validator: (v) {
+        if (v == null || v.trim().isEmpty) return 'Required';
+        if (v.length < 6) return 'Min 6 characters';
+        return null;
+      },
     );
   }
 }

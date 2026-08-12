@@ -62,8 +62,13 @@ class _LoginScreenState extends State<LoginScreen> {
       final user = credential.user;
       if (user == null) { _showTopSnackBar('Login failed.'); return; }
 
-      // Check email verification
-      if (!user.emailVerified && email != _superAdminEmail) {
+      // Fetch user role to decide whether email verification is required.
+      final isOrgAdmin = await _isOrganizationAdmin(user.uid);
+
+      // Check email verification. Organization admins are verified by the
+      // Super Admin approval flow, so they are allowed to login without
+      // email verification once their organization is approved.
+      if (!user.emailVerified && email != _superAdminEmail && !isOrgAdmin) {
         await FirebaseAuth.instance.signOut();
         _showTopSnackBar('Please verify your email first. Check your inbox.', isError: true);
         if (mounted) setState(() => _isLoading = false);
@@ -89,6 +94,19 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Returns true if the Firestore user record has an organization-admin role.
+  Future<bool> _isOrganizationAdmin(String uid) async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final role = (doc.data()?['role'] ?? '').toString();
+      return role == 'blood_bank_admin' ||
+          role == 'university_admin' ||
+          role == 'society_admin';
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Shared navigation logic after successful login
   /// Routes to the appropriate dashboard based on user role.
   Future<void> _navigateAfterLogin(User user) async {
@@ -99,6 +117,43 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = user.email ?? '';
     final role = (data['role'] ?? '').toString();
     final hasLocation = (data['location'] ?? '').toString().isNotEmpty;
+
+    // ── Gate: organization admins must be approved by Super Admin ──
+    final isOrgAdmin = role == 'blood_bank_admin' ||
+        role == 'university_admin' ||
+        role == 'society_admin';
+    final approved = data['approved'] == true;
+
+    if (isOrgAdmin && !approved) {
+      await FirebaseAuth.instance.signOut();
+      if (mounted) {
+        _showTopSnackBar(
+          'Your organization is still awaiting approval by the Super Admin.',
+          isError: true,
+        );
+        setState(() => _isLoading = false);
+      }
+      return;
+    }
+
+    if (isOrgAdmin) {
+      // Block suspended / rejected organizations even if previously approved.
+      try {
+        final org = await sl.organization.getOrganizationByAdminId(user.uid);
+        if (org != null &&
+            (org.status == 'suspended' || org.status == 'rejected')) {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            _showTopSnackBar(
+              'Your organization account is ${org.status}. Contact the Super Admin.',
+              isError: true,
+            );
+            setState(() => _isLoading = false);
+          }
+          return;
+        }
+      } catch (_) {}
+    }
 
     // ── Multi-tenant role-based routing ──
     Widget targetScreen;

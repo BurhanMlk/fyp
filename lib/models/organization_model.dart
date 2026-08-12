@@ -191,4 +191,22 @@ class OrganizationModel {
     if (value is Timestamp) return value.toDate();
     return DateTime.tryParse(value.toString());
   }
+
+  /// Maps an organization type to the Firestore role of its admin user.
+  /// Blood banks get a blood bank admin, universities get a university admin,
+  /// and societies/NGOs get a society admin role (each with its own dashboard).
+  static String adminRoleForType(String type) {
+    switch (type) {
+      case 'blood_bank':
+        return 'blood_bank_admin';
+      case 'university':
+        return 'university_admin';
+      case 'society':
+        return 'society_admin';
+      case 'ngo':
+        return 'society_admin';
+      default:
+        return 'society_admin';
+    }
+  }
 }

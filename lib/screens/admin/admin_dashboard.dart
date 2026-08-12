@@ -29,6 +29,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   int _donors = 0;
   int _recipients = 0;
   int _bloodBanksCount = 0;
+  int _pendingOrgCount = 0;
   // Selection for inbox details
   Map<String, dynamic>? _selectedItem;
   String? _selectedType; // 'donor_request' | 'emergency' | 'forgot' | 'registration'
@@ -101,6 +102,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       } else {
         _loadStats();
         _loadBloodBanks();
+        _loadPendingOrgCount();
         _loadAnalyticsSummary();
         _loadBloodGroupDistribution();
         _loadMonthlyTrends();
@@ -177,7 +179,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           donors++;
         } else if (r == 'recipient') {
           recipients++;
-        } else if (r != 'admin' && r != 'super_admin') {
+        } else if (r == 'blood_bank_admin' || r == 'blood_bank') {
           bloodBanks++;
         }
       }
@@ -198,7 +200,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             final r = d.data()['role'] ?? '';
             if (r == 'donor') donors++;
             else if (r == 'recipient') recipients++;
-            else if (r != 'admin' && r != 'super_admin') bloodBanks++;
+            else if (r == 'blood_bank_admin' || r == 'blood_bank') bloodBanks++;
           }
           setState(() {
             _totalUsers = snap.docs.length;
@@ -219,7 +221,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           final role = u['role'] ?? '';
           if (role == 'donor') donors++;
           else if (role == 'recipient') recipients++;
-          else if (role != 'admin' && role != 'super_admin') bloodBanks++;
+          else if (role == 'blood_bank_admin' || role == 'blood_bank') bloodBanks++;
         }
         setState(() {
           _totalUsers = list.length;
@@ -227,6 +229,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
           _recipients = recipients;
           _bloodBanksCount = bloodBanks;
         });
+      }
+    }
+  }
+
+  Future<void> _loadPendingOrgCount() async {
+    try {
+      final count = await sl.organization.getPendingApprovalCount();
+      if (mounted) setState(() => _pendingOrgCount = count);
+    } catch (_) {
+      if (FirebaseService.initialized) {
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('organizations')
+              .where('status', isEqualTo: 'pending')
+              .get();
+          if (mounted) setState(() => _pendingOrgCount = snap.docs.length);
+        } catch (_) {}
       }
     }
   }
@@ -1688,7 +1707,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         for (final doc in bloodBanksSnap.docs) {
           final data = doc.data() as Map<String, dynamic>;
           final role = data['role'] ?? '';
-          if (role != 'donor' && role != 'recipient' && role != 'admin' && role != 'super_admin') {
+          if (role == 'blood_bank_admin' || role == 'blood_bank') {
             await doc.reference.delete();
           }
         }
@@ -1707,7 +1726,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         try {
           final Map<String, dynamic> u = jsonDecode(s);
           final role = u['role'] ?? '';
-          return role == 'donor' || role == 'recipient' || role == 'admin' || role == 'super_admin';
+          // Keep everyone except actual blood bank accounts.
+          return role != 'blood_bank_admin' && role != 'blood_bank';
         } catch (_) {
           return true;
         }
@@ -1892,6 +1912,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
             visualDensity: VisualDensity.compact,
             leading: Icon(Icons.business_center, size: 20, color: _currentModule == 'organizations' ? Color(0xFFD32F2F) : Colors.grey),
             title: Text('Organizations', style: TextStyle(fontSize: 14, fontWeight: _currentModule == 'organizations' ? FontWeight.bold : FontWeight.normal)),
+            trailing: _pendingOrgCount > 0
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade700,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '$_pendingOrgCount pending',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  )
+                : null,
             selected: _currentModule == 'organizations',
             onTap: () {
               setState(() => _currentModule = 'organizations');
@@ -3886,7 +3919,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
           final docs = snap.data!.docs.where((doc) {
             final data = doc.data() as Map<String, dynamic>;
             final role = data['role'] ?? '';
-            return role != 'donor' && role != 'recipient' && role != 'admin' && role != 'super_admin';
+            // Only real blood bank admins belong in the Blood Banks list.
+            return role == 'blood_bank_admin' || role == 'blood_bank';
           }).toList();
           if (docs.isEmpty) return Center(child: Text('No blood banks found'));
           return ListView.builder(
@@ -4080,7 +4114,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
           try {
             final Map<String, dynamic> u = jsonDecode(s);
             final role = u['role'] ?? '';
-            return role != 'donor' && role != 'recipient' && role != 'admin' && role != 'super_admin';
+            // Only real blood bank admins belong in the Blood Banks list.
+            return role == 'blood_bank_admin' || role == 'blood_bank';
           } catch (_) {
             return false;
           }

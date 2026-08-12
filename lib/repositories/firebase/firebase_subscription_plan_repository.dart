@@ -22,12 +22,16 @@ class FirebaseSubscriptionPlanRepository implements ISubscriptionPlanRepository 
 
   @override
   Future<List<SubscriptionPlanModel>> getAllPlans({bool activeOnly = false}) async {
-    Query query = _firestore.collection(_collection).orderBy('sortOrder');
+    // Fetch all plans ordered by sortOrder (single-field orderBy — no composite index needed)
+    // and filter in Dart to avoid a composite index requirement.
+    final snap = await _firestore.collection(_collection).orderBy('sortOrder').get();
+    final plans = snap.docs
+        .map((d) => SubscriptionPlanModel.fromFirestore(d.id, (d.data() as Map<String, dynamic>?) ?? {}))
+        .toList();
     if (activeOnly) {
-      query = query.where('isActive', isEqualTo: true);
+      return plans.where((p) => p.isActive).toList();
     }
-    final snap = await query.get();
-    return snap.docs.map((d) => SubscriptionPlanModel.fromFirestore(d.id, (d.data() as Map<String, dynamic>?) ?? {})).toList();
+    return plans;
   }
 
   @override
@@ -47,13 +51,15 @@ class FirebaseSubscriptionPlanRepository implements ISubscriptionPlanRepository 
 
   @override
   Future<SubscriptionPlanModel?> getTrialPlan() async {
-    final snap = await _firestore
-        .collection(_collection)
-        .where('trialDays', isGreaterThan: 0)
-        .where('isActive', isEqualTo: true)
-        .limit(1)
-        .get();
-    if (snap.docs.isEmpty) return null;
-    return SubscriptionPlanModel.fromFirestore(snap.docs.first.id, (snap.docs.first.data() as Map<String, dynamic>?) ?? {});
+    // Fetch all plans and filter in Dart to avoid a composite index requirement
+    // (range query `trialDays > 0` + equality `isActive == true` would need an index).
+    final snap = await _firestore.collection(_collection).get();
+    for (final doc in snap.docs) {
+      final plan = SubscriptionPlanModel.fromFirestore(doc.id, (doc.data() as Map<String, dynamic>?) ?? {});
+      if (plan.isActive && (plan.trialDays ?? 0) > 0) {
+        return plan;
+      }
+    }
+    return null;
   }
 }

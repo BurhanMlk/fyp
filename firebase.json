@@ -1,4 +1,8 @@
 {
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
   "project_info": {
     "project_number": "849500459261",
     "firebase_url": "https://bloodbridge-62261-default-rtdb.asia-southeast1.firebasedatabase.app",
