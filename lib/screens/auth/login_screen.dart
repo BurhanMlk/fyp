@@ -166,18 +166,15 @@ class _LoginScreenState extends State<LoginScreen> {
     } else if (role == 'university_admin') {
       targetScreen = const UniversityAdminDashboard();
     } else if (role == 'society_admin') {
-      // University society gets the enhanced dashboard;
-      // NGO keeps the classic society dashboard.
-      String orgType = 'society';
+      // University societies get the enhanced dashboard; standalone NGOs keep the classic one.
+      targetScreen = const UniversitySocietyDashboard();
       try {
         final org = await sl.organization.getOrganizationByAdminId(user.uid);
-        orgType = org?.type ?? 'society';
+        if (org != null && org.type == 'ngo' &&
+            (org.universityId == null || org.universityId!.isEmpty)) {
+          targetScreen = const SocietyAdminDashboard();
+        }
       } catch (_) {}
-      if (orgType == 'society') {
-        targetScreen = const UniversitySocietyDashboard();
-      } else {
-        targetScreen = const SocietyAdminDashboard();
-      }
     } else if (role == 'admin') {
       // Legacy admin → route to super admin for backward compatibility
       targetScreen = const AdminDashboard();

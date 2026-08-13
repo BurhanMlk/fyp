@@ -299,6 +299,70 @@ class _UniversitySocietyDashboardState extends State<UniversitySocietyDashboard>
     );
   }
 
+  Future<bool?> _confirmDialog({required String title, required String message}) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteBloodBank() async {
+    if (_bloodBank == null) return;
+    final name = _bloodBank!['name']?.toString() ?? 'Blood Bank';
+    final confirmed = await _confirmDialog(
+      title: 'Delete Blood Bank',
+      message: 'Delete "$name" and all its inventory records? This cannot be undone.',
+    );
+    if (confirmed != true) return;
+    try {
+      final bbId = _bloodBank!['id'].toString();
+      // Delete linked inventory records first
+      for (final item in _inventory) {
+        await sl.bloodInventory.deleteInventory(item.id);
+      }
+      await FirebaseFirestore.instance.collection('organizations').doc(bbId).delete();
+      if (mounted) {
+        showTopSnackBar(context, message: 'Blood bank deleted', backgroundColor: Colors.orange.shade700);
+      }
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showTopSnackBar(context, message: 'Error: $e');
+    }
+  }
+
+  Future<void> _deleteInventory(BloodInventoryModel item) async {
+    final confirmed = await _confirmDialog(
+      title: 'Delete Blood Unit',
+      message: 'Delete ${item.bloodGroup} (${item.quantity} ${item.unit})? This cannot be undone.',
+    );
+    if (confirmed != true) return;
+    try {
+      await sl.bloodInventory.deleteInventory(item.id);
+      if (mounted) {
+        showTopSnackBar(context, message: 'Blood unit deleted', backgroundColor: Colors.orange.shade700);
+      }
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showTopSnackBar(context, message: 'Error: $e');
+    }
+  }
+
   // ─────────────────────────── INVENTORY ───────────────────────────
   void _showAddInventoryDialog() {
     if (_bloodBank == null) return;
@@ -540,10 +604,20 @@ class _UniversitySocietyDashboardState extends State<UniversitySocietyDashboard>
                     ),
                     title: Text(_bloodBank!['name'] ?? 'Blood Bank', style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Text(_bloodBank!['city']?.toString() ?? ''),
-                    trailing: TextButton.icon(
-                      onPressed: _showAddInventoryDialog,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add Unit'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton.icon(
+                          onPressed: _showAddInventoryDialog,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Unit'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          tooltip: 'Delete blood bank',
+                          onPressed: _deleteBloodBank,
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -564,9 +638,19 @@ class _UniversitySocietyDashboardState extends State<UniversitySocietyDashboard>
                     ),
                     title: Text('${item.quantity} ${item.unit}'),
                     subtitle: Text('Expires: ${_formatDate(item.expiryDate)}'),
-                    trailing: Text(
-                      item.status.replaceAll('_', ' ').toUpperCase(),
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: item.status == 'expired' ? Colors.red : Colors.green.shade700),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          item.status.replaceAll('_', ' ').toUpperCase(),
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: item.status == 'expired' ? Colors.red : Colors.green.shade700),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          tooltip: 'Delete unit',
+                          onPressed: () => _deleteInventory(item),
+                        ),
+                      ],
                     ),
                   ),
                 )),

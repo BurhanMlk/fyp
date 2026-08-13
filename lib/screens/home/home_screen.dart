@@ -7,6 +7,7 @@ import '../admin/admin_dashboard.dart';
 import '../admin/blood_bank_admin_dashboard.dart';
 import '../admin/university_admin_dashboard.dart';
 import '../admin/society_admin_dashboard.dart';
+import '../admin/university_society_dashboard.dart';
 import '../donors/donor_list_screen.dart';
 import '../recipients/recipient_list_screen.dart';
 import '../auth/login_screen.dart';
@@ -98,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Navigate to appropriate admin dashboard based on role
-  void _checkAndNavigateToAdmin() {
+  Future<void> _checkAndNavigateToAdmin() async {
     final role = _currentRole;
     Widget? target;
     if (role == 'super_admin' || role == 'admin') {
@@ -108,14 +109,36 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (role == 'university_admin') {
       target = const UniversityAdminDashboard();
     } else if (role == 'society_admin') {
-      target = const SocietyAdminDashboard();
+      // University societies get the enhanced dashboard; standalone NGOs keep the classic one.
+      target = const UniversitySocietyDashboard();
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          final orgSnap = await FirebaseFirestore.instance
+              .collection('organizations')
+              .where('adminId', isEqualTo: user.uid)
+              .limit(1)
+              .get();
+          if (orgSnap.docs.isNotEmpty) {
+            final orgData = orgSnap.docs.first.data();
+            final isStandaloneNgo = orgData['type'] == 'ngo' &&
+                (orgData['universityId'] == null || orgData['universityId'].toString().isEmpty);
+            if (isStandaloneNgo) {
+              target = const SocietyAdminDashboard();
+            }
+          }
+        }
+      } catch (_) {}
     }
 
-    if (target != null) {
+    final destination = target;
+    if (destination != null && mounted) {
       Future.microtask(() {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => target!),
-        );
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => destination),
+          );
+        }
       });
     }
   }
