@@ -13,6 +13,7 @@ import '../admin/admin_dashboard.dart';
 import '../admin/blood_bank_admin_dashboard.dart';
 import '../admin/university_admin_dashboard.dart';
 import '../admin/society_admin_dashboard.dart';
+import '../admin/university_society_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -165,7 +166,18 @@ class _LoginScreenState extends State<LoginScreen> {
     } else if (role == 'university_admin') {
       targetScreen = const UniversityAdminDashboard();
     } else if (role == 'society_admin') {
-      targetScreen = const SocietyAdminDashboard();
+      // University society gets the enhanced dashboard;
+      // NGO keeps the classic society dashboard.
+      String orgType = 'society';
+      try {
+        final org = await sl.organization.getOrganizationByAdminId(user.uid);
+        orgType = org?.type ?? 'society';
+      } catch (_) {}
+      if (orgType == 'society') {
+        targetScreen = const UniversitySocietyDashboard();
+      } else {
+        targetScreen = const SocietyAdminDashboard();
+      }
     } else if (role == 'admin') {
       // Legacy admin → route to super admin for backward compatibility
       targetScreen = const AdminDashboard();

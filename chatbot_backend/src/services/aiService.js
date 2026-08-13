@@ -39,6 +39,8 @@ BLOOD BRIDGE APP KNOWLEDGE:
 - Blood Groups: O- universal donor, AB+ universal recipient
 - Emergency: Create emergency request → system finds nearest blood → admin notified
 - Eligibility: Donors must wait 3 months between donations
+- Organizations: 4 types can register — University, University Society, NGO, and Blood Bank/Hospital. They register via the Organization Registration screen (select type, fill details, create admin account). The application becomes PENDING and the Super Admin approves/rejects it. The Super Admin can also Suspend, Activate, or Delete organizations from Organization Management (delete icon on each row with confirmation).
+- NGO/Society Admin dashboard Quick Actions after approval: Add Member (by email), Campaign (create a blood donation campaign with title/date/target units), Create Event (donation event with date + time), and Reports (members, active donors, blood group distribution, campaigns & events count).
 
 USER-SPECIFIC GUIDANCE:
 - Use userRole (donor/recipient/admin) to personalize responses
@@ -81,6 +83,9 @@ USER-SPECIFIC GUIDANCE:
       'request_blood': /need blood|request|recipient|چاہیے|مریض|ضرورت/i,
       'register': /register|signup|create account|رجسٹر|سائن اپ/i,
       'verify': /verify|document|approve|upload|تصدیق|دستاویز/i,
+      'organization': /organization|ngo|society|university|blood bank|تنظیم|این جی او|سوسائٹی|یونیورسٹی/i,
+      'org_management': /delete organization|remove organization|suspend|reject|حذف|منظور|معلق/i,
+      'campaign_event': /campaign|event|report|quick action|مہم|تقریب|رپورٹ/i,
       'blood_banks': /hospital|blood bank|banks|ہسپتال|بلڈ بینک/i,
       'emergency': /emergency|urgent|critical|ایمرجنسی|فوری/i,
       'eligibility': /eligible|when|wait|months|اہل|کب|انتظار/i,

@@ -30,6 +30,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
   int _recipients = 0;
   int _bloodBanksCount = 0;
   int _pendingOrgCount = 0;
+  // Registered organization counts (from 'organizations' collection)
+  int _universitiesCount = 0;
+  int _societiesCount = 0;
+  int _ngosCount = 0;
+  int _individualBloodBanksCount = 0;
   // Selection for inbox details
   Map<String, dynamic>? _selectedItem;
   String? _selectedType; // 'donor_request' | 'emergency' | 'forgot' | 'registration'
@@ -103,6 +108,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         _loadStats();
         _loadBloodBanks();
         _loadPendingOrgCount();
+        _loadOrganizationCounts();
         _loadAnalyticsSummary();
         _loadBloodGroupDistribution();
         _loadMonthlyTrends();
@@ -245,6 +251,41 @@ class _AdminDashboardState extends State<AdminDashboard> {
               .where('status', isEqualTo: 'pending')
               .get();
           if (mounted) setState(() => _pendingOrgCount = snap.docs.length);
+        } catch (_) {}
+      }
+    }
+  }
+
+  // Counts how many organizations of each type have registered
+  // (university / society / ngo / blood_bank) from the 'organizations' collection.
+  Future<void> _loadOrganizationCounts() async {
+    try {
+      final counts = await sl.organization.getOrganizationCountByType();
+      if (mounted) {
+        setState(() {
+          _universitiesCount = counts['university'] ?? 0;
+          _societiesCount = counts['society'] ?? 0;
+          _ngosCount = counts['ngo'] ?? 0;
+          _individualBloodBanksCount = counts['blood_bank'] ?? 0;
+        });
+      }
+    } catch (_) {
+      if (FirebaseService.initialized) {
+        try {
+          final snap = await FirebaseFirestore.instance.collection('organizations').get();
+          if (mounted) {
+            final counts = <String, int>{};
+            for (final d in snap.docs) {
+              final t = (d.data()['type'] ?? 'unknown').toString();
+              counts[t] = (counts[t] ?? 0) + 1;
+            }
+            setState(() {
+              _universitiesCount = counts['university'] ?? 0;
+              _societiesCount = counts['society'] ?? 0;
+              _ngosCount = counts['ngo'] ?? 0;
+              _individualBloodBanksCount = counts['blood_bank'] ?? 0;
+            });
+          }
         } catch (_) {}
       }
     }
@@ -2301,6 +2342,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     Icons.pending_actions,
                     Colors.orange,
                     () => setState(() => _currentModule = 'donor_requests'),
+                  ),
+                  _quickAccessCard(
+                    'Organizations',
+                    'Manage org registrations',
+                    Icons.apartment,
+                    Colors.brown,
+                    () => setState(() => _currentModule = 'organizations'),
                   ),
                 ],
               );
@@ -6455,7 +6503,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           _moduleHeader('User Registration & Profile', Icons.person_add, Color(0xFF1976D2)),
           const SizedBox(height: 16),
           
-          // Stats Row
+          // Stats Row — Users
           Row(
             children: [
               Expanded(child: _miniStatCard('Total Users', _totalUsers.toString(), Icons.people, Colors.blue)),
@@ -6465,6 +6513,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
               Expanded(child: _miniStatCard('Recipients', _recipients.toString(), Icons.local_hospital, Colors.green)),
               SizedBox(width: 12),
               Expanded(child: _miniStatCard('Blood Banks', _bloodBanksCount.toString(), Icons.business, Colors.orange)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Stats Row — Registered Organizations
+          Row(
+            children: [
+              Expanded(child: _miniStatCard('University Societies', _societiesCount.toString(), Icons.groups, Colors.teal)),
+              SizedBox(width: 12),
+              Expanded(child: _miniStatCard('NGOs', _ngosCount.toString(), Icons.volunteer_activism, Colors.purple)),
+              SizedBox(width: 12),
+              Expanded(child: _miniStatCard('Individual Blood Banks', _individualBloodBanksCount.toString(), Icons.bloodtype, Colors.deepOrange)),
             ],
           ),
           const SizedBox(height: 20),
@@ -6530,7 +6589,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     SizedBox(width: 8),
                     IconButton(
                       icon: Icon(Icons.refresh, color: Color(0xFF1976D2)),
-                      onPressed: _loadStats,
+                      onPressed: () {
+                        _loadStats();
+                        _loadOrganizationCounts();
+                      },
                       padding: EdgeInsets.all(8),
                       constraints: BoxConstraints(),
                     ),

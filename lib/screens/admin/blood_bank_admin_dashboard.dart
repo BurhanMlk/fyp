@@ -33,8 +33,8 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
     _loadBloodBankData();
   }
 
-  Future<void> _loadBloodBankData() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadBloodBankData({bool showLoader = true}) async {
+    if (showLoader) setState(() => _isLoading = true);
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
@@ -75,6 +75,11 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: Colors.white.withOpacity(0.85),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+          ),
           title: const Text('Add Blood Unit'),
           content: SingleChildScrollView(
             child: Column(
@@ -142,7 +147,7 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
                 try {
                   await sl.bloodInventory.addInventory(inventory);
                   Navigator.pop(ctx);
-                  _loadBloodBankData();
+                  _loadBloodBankData(showLoader: false);
                   showTopSnackBar(context, message: 'Blood unit added!', backgroundColor: Colors.green.shade700);
                 } catch (e) {
                   showTopSnackBar(context, message: 'Error: $e');
@@ -164,6 +169,25 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
     return Colors.purple.shade600;
   }
 
+  DateTime? _nearestExpiryFor(String bg) {
+    DateTime? nearest;
+    for (final item in _inventory) {
+      if (item.bloodGroup != bg) continue;
+      if (item.status == 'expired' || item.status == 'used') continue;
+      if (nearest == null || item.expiryDate.isBefore(nearest)) {
+        nearest = item.expiryDate;
+      }
+    }
+    return nearest;
+  }
+
+  String _formatDate(DateTime d) {
+    final local = d.toLocal();
+    final mm = local.month.toString().padLeft(2, '0');
+    final dd = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$mm-$dd';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const Scaffold(body: Center(child: BloodBridgeLoader()));
@@ -181,11 +205,11 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
         backgroundColor: Colors.red.shade700,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadBloodBankData),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: () => _loadBloodBankData(showLoader: false)),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _loadBloodBankData,
+        onRefresh: () => _loadBloodBankData(showLoader: false),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
@@ -216,32 +240,33 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
               if (_bloodGroupSummary.isEmpty)
                 const Card(child: Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No inventory yet'))))
               else
-                ...['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) {
-                  final count = _bloodGroupSummary[bg] ?? 0;
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 4),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: _bloodGroupColor(bg),
-                        child: Text(bg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                      ),
-                      title: Text('$bg - $count units'),
-                      trailing: count <= 5 && count > 0
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(color: Colors.orange.shade100, borderRadius: BorderRadius.circular(12)),
-                              child: const Text('Low', style: TextStyle(color: Colors.orange, fontSize: 11)),
-                            )
-                          : count == 0
+                ..._bloodGroupSummary.entries
+                    .where((e) => e.key.isNotEmpty && e.value > 0)
+                    .map((entry) {
+                      final bg = entry.key;
+                      final count = entry.value;
+                      final nearest = _nearestExpiryFor(bg);
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 4),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: _bloodGroupColor(bg),
+                            child: Text(bg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                          ),
+                          title: Text('$bg - $count units'),
+                          subtitle: nearest != null
+                              ? Text('Expires: ${_formatDate(nearest)}')
+                              : null,
+                          trailing: count <= 5
                               ? Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
-                                  child: const Text('Out', style: TextStyle(color: Colors.red, fontSize: 11)),
+                                  decoration: BoxDecoration(color: Colors.orange.shade100, borderRadius: BorderRadius.circular(12)),
+                                  child: const Text('Low', style: TextStyle(color: Colors.orange, fontSize: 11)),
                                 )
                               : null,
-                    ),
-                  );
-                }),
+                        ),
+                      );
+                    }),
               const SizedBox(height: 20),
 
               // Recent Inventory
@@ -267,7 +292,7 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
                       child: Text(item.bloodGroup, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                     ),
                     title: Text('${item.quantity} ${item.unit}'),
-                    subtitle: Text('Expires: ${item.expiryDate.toLocal()}'.split(' ')[0]),
+                    subtitle: Text('Expires: ${_formatDate(item.expiryDate)}'),
                     trailing: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
@@ -288,6 +313,11 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
                       final result = await showDialog<String>(
                         context: context,
                         builder: (_) => AlertDialog(
+                          backgroundColor: Colors.white.withOpacity(0.85),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+                          ),
                           title: Text('Update ${item.bloodGroup}'),
                           content: TextField(
                             controller: qtyCtl,
@@ -308,11 +338,11 @@ class _BloodBankAdminDashboardState extends State<BloodBankAdminDashboard> {
                       );
                       if (result == 'delete') {
                         await sl.bloodInventory.deleteInventory(item.id);
-                        _loadBloodBankData();
+                        _loadBloodBankData(showLoader: false);
                       } else if (result != null) {
                         final newQty = int.tryParse(result) ?? item.quantity;
                         await sl.bloodInventory.updateQuantity(item.id, newQty);
-                        _loadBloodBankData();
+                        _loadBloodBankData(showLoader: false);
                       }
                     },
                   ),

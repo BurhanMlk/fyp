@@ -22,12 +22,19 @@ class FirebaseBloodInventoryRepository implements IBloodInventoryRepository {
 
   @override
   Future<List<BloodInventoryModel>> getInventoryForBloodBank(String bloodBankId) async {
+    // NOTE: no orderBy here — that would require a composite index.
+    // We sort in memory instead so this works without deploying an index.
     final snap = await _firestore
         .collection(_collection)
         .where('bloodBankId', isEqualTo: bloodBankId)
-        .orderBy('createdAt', descending: true)
         .get();
-    return snap.docs.map((d) => BloodInventoryModel.fromFirestore(d.id, d.data())).toList();
+    final items = snap.docs.map((d) => BloodInventoryModel.fromFirestore(d.id, d.data())).toList();
+    items.sort((a, b) {
+      final at = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bt = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bt.compareTo(at); // newest first
+    });
+    return items;
   }
 
   @override

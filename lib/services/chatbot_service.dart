@@ -31,8 +31,8 @@ class ChatbotService {
     else if (lower == 'help' || lower == 'مدد' || lower.contains('menu')) {
       reply = _helpMenu(urdu);
     }
-    // ===== NUMBERED OPTIONS (1-6) =====
-    else if (RegExp(r'^[1-6]$').hasMatch(lower) || RegExp(r'^(1|2|3|4|5|6)[.)\s]').hasMatch(lower)) {
+    // ===== NUMBERED OPTIONS (1-8) =====
+    else if (RegExp(r'^[1-8]$').hasMatch(lower) || RegExp(r'^(1|2|3|4|5|6|7|8)[.)\s]').hasMatch(lower)) {
       final num = lower[0];
       reply = _guideByNumber(num, urdu);
     }
@@ -59,6 +59,18 @@ class ChatbotService {
     // ===== ELIGIBILITY =====
     else if (_matchAny(lower, ['eligible','eligibility','can i donate','requirements','weight','age','hb','اہل','شرائط','6'])) {
       reply = _eligibilityGuide(urdu);
+    }
+    // ===== DELETE ORGANIZATION (admin) =====
+    else if (_matchAny(lower, ['delete organization','remove organization','delete org','organization delete','تنظیم حذف','حذف کریں','ڈیلیٹ'])) {
+      reply = _organizationDeleteGuide(urdu);
+    }
+    // ===== NGO / SOCIETY ADMIN FEATURES =====
+    else if (_matchAny(lower, ['campaign','event','report','ngo feature','society feature','quick action','مہم','تقریب','رپورٹ'])) {
+      reply = _ngoAdminFeaturesGuide(urdu);
+    }
+    // ===== ORGANIZATIONS =====
+    else if (_matchAny(lower, ['organization','organisation','ngo','society','university','blood bank','تنظیم','این جی او','سوسائٹی','یونیورسٹی'])) {
+      reply = _organizationGuide(urdu);
     }
     // ===== BLOOD GROUP =====
     else if (lower.contains('blood group') || lower.contains('group') || lower.contains('گروپ')) {
@@ -96,16 +108,20 @@ class ChatbotService {
         '3️⃣  رجسٹریشن اور تصدیق\n'
         '4️⃣  ایمرجنسی درخواست\n'
         '5️⃣  ایڈمن سے رابطہ\n'
-        '6️⃣  اہلیت کی شرائط\n\n'
-        '👉 براہ کرم 1 سے 6 میں سے کوئی نمبر لکھیں۔'
+        '6️⃣  اہلیت کی شرائط\n'
+        '7️⃣  تنظیمیں (رجسٹریشن / مینجمنٹ)\n'
+        '8️⃣  NGO / Society ایڈمن فیچرز\n\n'
+        '👉 براہ کرم 1 سے 8 میں سے کوئی نمبر لکھیں۔'
       : '📋 HELP MENU:\n\n'
         '1️⃣  Blood Donation\n'
         '2️⃣  Find Donors\n'
         '3️⃣  Register & Verification\n'
         '4️⃣  Emergency Request\n'
         '5️⃣  Contact Admin\n'
-        '6️⃣  Eligibility Criteria\n\n'
-        '👉 Please type a number from 1 to 6.';
+        '6️⃣  Eligibility Criteria\n'
+        '7️⃣  Organizations (Register / Manage)\n'
+        '8️⃣  NGO / Society Admin Features\n\n'
+        '👉 Please type a number from 1 to 8.';
   }
 
   // ======================== GUIDES BY NUMBER ========================
@@ -117,6 +133,8 @@ class ChatbotService {
       case '4': return _emergencyGuideSync(urdu);
       case '5': return _contactAdminGuideSync(urdu);
       case '6': return _eligibilityGuide(urdu);
+      case '7': return _organizationGuide(urdu);
+      case '8': return _ngoAdminFeaturesGuide(urdu);
       default: return _helpMenu(urdu);
     }
   }
@@ -298,6 +316,81 @@ class ChatbotService {
         '💪 Health: Generally healthy\n\n'
         '⚠️ If you are sick, do NOT donate.\n'
         '❓ More questions? Type "help".';
+  }
+
+  // ---- 7: ORGANIZATIONS (Registration & Management) ----
+  String _organizationGuide(bool urdu) {
+    return urdu
+      ? '🏢 تنظیمیں — رجسٹریشن اور مینجمنٹ:\n\n'
+        'BloodBridge میں 4 قسم کی تنظیمیں رجسٹر ہو سکتی ہیں:\n'
+        '1️⃣  University\n'
+        '2️⃣  University Society / Student Society\n'
+        '3️⃣  NGO / Other Organization\n'
+        '4️⃣  Blood Bank / Hospital\n\n'
+        '📝 رجسٹریشن کا طریقہ:\n'
+        '1️⃣  Organization Registration screen پر جائیں\n'
+        '2️⃣  Type منتخب کریں (University / Society / NGO / Blood Bank)\n'
+        '3️⃣  تفصیلات بھریں (name, email, phone, وغیرہ)\n'
+        '4️⃣  Admin email اور password بنائیں\n'
+        '5️⃣  Submit کریں → درخواست PENDING ہوتی ہے\n'
+        '6️⃣  Super Admin approve کرے گا → پھر login ہو جائے گا\n\n'
+        '🛠️ Super Admin کی Organization Management میں:\n'
+        '• Approve / Reject / Suspend / Activate\n'
+        '• Delete بھی کر سکتا ہے\n\n'
+        '❓ Type "help" for menu.'
+      : '🏢 ORGANIZATIONS — Registration & Management:\n\n'
+        'BloodBridge supports 4 organization types:\n'
+        '1️⃣  University\n'
+        '2️⃣  University Society / Student Society\n'
+        '3️⃣  NGO / Other Organization\n'
+        '4️⃣  Blood Bank / Hospital\n\n'
+        '📝 How to register:\n'
+        '1️⃣  Go to the Organization Registration screen\n'
+        '2️⃣  Select type (University / Society / NGO / Blood Bank)\n'
+        '3️⃣  Fill details (name, email, phone, etc.)\n'
+        '4️⃣  Create an admin email & password\n'
+        '5️⃣  Submit → application becomes PENDING\n'
+        '6️⃣  Super Admin approves → then you can login\n\n'
+        '🛠️ In Super Admin Organization Management:\n'
+        '• Approve / Reject / Suspend / Activate\n'
+        '• Can also Delete an organization\n\n'
+        '❓ Type "help" for menu.';
+  }
+
+  // ---- 8: NGO / SOCIETY ADMIN FEATURES ----
+  String _ngoAdminFeaturesGuide(bool urdu) {
+    return urdu
+      ? '🤝 NGO / Society ایڈمن — فیچرز:\n\n'
+        'Approve ہونے کے بعد NGO/Society admin کا dashboard کھلتا ہے جس میں Quick Actions ہیں:\n\n'
+        '1️⃣  Add Member — email سے member شامل کریں\n'
+        '2️⃣  Campaign — خون کے عطیہ کی مہم بنائیں (title, date, target units)\n'
+        '3️⃣  Create Event — عطیہ کا ایونٹ بنائیں (date + time)\n'
+        '4️⃣  Reports — members, donors اور blood group distribution دیکھیں\n\n'
+        '❓ Type "help" for menu.'
+      : '🤝 NGO / SOCIETY ADMIN — Features:\n\n'
+        'After approval, NGO/Society admin gets a dashboard with Quick Actions:\n\n'
+        '1️⃣  Add Member — add a member by email\n'
+        '2️⃣  Campaign — create a blood donation campaign (title, date, target units)\n'
+        '3️⃣  Create Event — create a donation event (date + time)\n'
+        '4️⃣  Reports — view members, donors & blood group distribution\n\n'
+        '❓ Type "help" for menu.';
+  }
+
+  // ---- DELETE ORGANIZATION (Super Admin) ----
+  String _organizationDeleteGuide(bool urdu) {
+    return urdu
+      ? '🗑️ تنظیم حذف کرنا (Super Admin):\n\n'
+        '1️⃣  Admin Dashboard → Quick Access → Organizations\n'
+        '2️⃣  جس تنظیم کو delete کرنا ہے اس کی row میں سرخ delete آئیکن دبائیں\n'
+        '3️⃣  Confirmation dialog آئے گا\n'
+        '4️⃣  Confirm کریں → تنظیم اور اس کا admin اکاؤنٹ delete ہو جائے گا\n\n'
+        '❓ Type "help" for menu.'
+      : '🗑️ DELETE ORGANIZATION (Super Admin):\n\n'
+        '1️⃣  Admin Dashboard → Quick Access → Organizations\n'
+        '2️⃣  Tap the red delete icon on the organization row\n'
+        '3️⃣  A confirmation dialog will appear\n'
+        '4️⃣  Confirm → the organization and its admin account are deleted\n\n'
+        '❓ Type "help" for menu.';
   }
 
   // ---- BLOOD GROUP INFO ----

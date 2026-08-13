@@ -53,11 +53,15 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
     super.dispose();
   }
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadData({bool showLoader = true}) async {
+    if (showLoader) setState(() => _isLoading = true);
     try {
-      _organizations = await sl.organization.getAllOrganizations();
-      _plans = await sl.subscriptionPlan.getAllPlans(activeOnly: true);
+      final results = await Future.wait([
+        sl.organization.getAllOrganizations(),
+        sl.subscriptionPlan.getAllPlans(activeOnly: true),
+      ]);
+      _organizations = results[0] as List<OrganizationModel>;
+      _plans = results[1] as List<SubscriptionPlanModel>;
     } catch (e) {
       if (mounted) {
         showTopSnackBar(context, message: 'Failed to load organizations: $e');
@@ -169,7 +173,7 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
 
       await sl.organization.updateOrganization(org.id, updates);
       showTopSnackBar(context, message: '${org.name} approved!', backgroundColor: Colors.green.shade700);
-      _loadData();
+      _loadData(showLoader: false);
     } catch (e) {
       showTopSnackBar(context, message: 'Failed to approve: $e');
     }
@@ -179,7 +183,7 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
     try {
       await sl.organization.rejectOrganization(org.id);
       showTopSnackBar(context, message: '${org.name} rejected', backgroundColor: Colors.orange.shade700);
-      _loadData();
+      _loadData(showLoader: false);
     } catch (e) {
       showTopSnackBar(context, message: 'Failed to reject: $e');
     }
@@ -189,7 +193,7 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
     try {
       await sl.organization.suspendOrganization(org.id);
       showTopSnackBar(context, message: '${org.name} suspended', backgroundColor: Colors.red.shade700);
-      _loadData();
+      _loadData(showLoader: false);
     } catch (e) {
       showTopSnackBar(context, message: 'Failed to suspend: $e');
     }
@@ -199,13 +203,67 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
     try {
       await sl.organization.activateOrganization(org.id);
       showTopSnackBar(context, message: '${org.name} activated', backgroundColor: Colors.green.shade700);
-      _loadData();
+      _loadData(showLoader: false);
     } catch (e) {
       showTopSnackBar(context, message: 'Failed to activate: $e');
     }
   }
 
-  void _showOrgDetails(OrganizationModel org) {
+  Future<void> _deleteOrg(OrganizationModel org) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.grey.shade300, width: 1.5),
+        ),
+        title: const Text('Delete Organization?'),
+        content: Text(
+          'Are you sure you want to delete "${org.name}"?\n\n'
+          'Its linked admin account will also be removed. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      // Remove the linked admin user record (if any) so no orphan admin remains.
+      final adminUid = org.adminId;
+      if (adminUid.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(adminUid).delete();
+        } catch (_) {}
+      }
+      await sl.organization.deleteOrganization(org.id);
+      // Optimistically remove from the list so the UI updates instantly.
+      setState(() {
+        _organizations.removeWhere((o) => o.id == org.id);
+      });
+      showTopSnackBar(context, message: '${org.name} deleted', backgroundColor: Colors.red.shade700);
+    } catch (e) {
+      showTopSnackBar(context, message: 'Failed to delete: $e');
+    }
+  }
+
+  Future<void> _showOrgDetails(OrganizationModel org) async {
+    final extras = await _fetchOrgExtras(org);
+    if (!mounted) return;
+
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -233,6 +291,10 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
               if (org.universityId != null) _detailRow('University ID', org.universityId!),
               _detailRow('Status', org.status.toUpperCase()),
               _detailRow('Created', org.createdAt?.toString().substring(0, 10) ?? 'N/A'),
+              if (extras.isNotEmpty) ...[
+                const Divider(height: 16),
+                ...extras.map((e) => _detailRow(e['label']!, e['value']!)),
+              ],
             ],
           ),
         ),
@@ -279,6 +341,75 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
         ],
       ),
     );
+  }
+
+  // Fetches extra operational data for an organization so the Super Admin
+  // can see donors, linked blood banks, and blood inventory at a glance.
+  Future<List<Map<String, String>>> _fetchOrgExtras(OrganizationModel org) async {
+    final extras = <Map<String, String>>[];
+    try {
+      // Donors for societies and NGOs
+      if (org.type == 'society' || org.type == 'ngo') {
+        final donorsSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('societyId', isEqualTo: org.id)
+            .get();
+        final donors = donorsSnap.docs
+            .where((d) => d.data()['isDonor'] == true || d.data()['role'] == 'donor')
+            .length;
+        extras.add({'label': 'Donors', 'value': '$donors'});
+      }
+
+      // Societies under a university
+      if (org.type == 'university') {
+        final socSnap = await FirebaseFirestore.instance
+            .collection('organizations')
+            .where('universityId', isEqualTo: org.id)
+            .get();
+        final societies = socSnap.docs.where((d) => d.data()['type'] == 'society').length;
+        extras.add({'label': 'Societies', 'value': '$societies'});
+      }
+
+      // Inventory for blood banks
+      if (org.type == 'blood_bank') {
+        final invSnap = await FirebaseFirestore.instance
+            .collection('blood_inventory')
+            .where('bloodBankId', isEqualTo: org.id)
+            .get();
+        int units = 0;
+        final groups = <String>{};
+        for (final d in invSnap.docs) {
+          final q = d.data()['quantity'];
+          units += q is int ? q : int.tryParse(q?.toString() ?? '0') ?? 0;
+          final bg = (d.data()['bloodGroup'] ?? '').toString();
+          if (bg.isNotEmpty) groups.add(bg);
+        }
+        extras.add({'label': 'Blood Units', 'value': '$units'});
+        extras.add({'label': 'Blood Groups', 'value': '${groups.length}'});
+      }
+
+      // Linked blood banks + their inventory for societies
+      if (org.type == 'society') {
+        final bbSnap = await FirebaseFirestore.instance
+            .collection('organizations')
+            .where('societyId', isEqualTo: org.id)
+            .get();
+        extras.add({'label': 'Linked Blood Banks', 'value': '${bbSnap.docs.length}'});
+        int units = 0;
+        for (final bb in bbSnap.docs) {
+          final invSnap = await FirebaseFirestore.instance
+              .collection('blood_inventory')
+              .where('bloodBankId', isEqualTo: bb.id)
+              .get();
+          for (final d in invSnap.docs) {
+            final q = d.data()['quantity'];
+            units += q is int ? q : int.tryParse(q?.toString() ?? '0') ?? 0;
+          }
+        }
+        extras.add({'label': 'Blood Units', 'value': '$units'});
+      }
+    } catch (_) {}
+    return extras;
   }
 
   @override
@@ -330,7 +461,7 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
                         ),
                       )
                     : RefreshIndicator(
-                        onRefresh: _loadData,
+                        onRefresh: () => _loadData(showLoader: false),
                         child: ListView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           itemCount: _filteredOrgs.length,
@@ -364,6 +495,13 @@ class _SuperAdminOrganizationsScreenState extends State<SuperAdminOrganizationsS
                                       ),
                                     ),
                                     const SizedBox(width: 4),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                      tooltip: 'Delete Organization',
+                                      onPressed: () => _deleteOrg(org),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
                                     const Icon(Icons.chevron_right),
                                   ],
                                 ),
